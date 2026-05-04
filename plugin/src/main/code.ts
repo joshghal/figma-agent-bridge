@@ -298,10 +298,38 @@ const decodeBase64ToBytes = (base64: string): Uint8Array => {
   }
 };
 
+const EDIT_REQUEST_TYPES = new Set<RequestType>([
+  "set_node_visibility",
+  "set_text_content",
+  "set_text_properties",
+  "set_node_properties",
+  "set_gradient_fill",
+  "create_frame",
+  "create_text",
+  "create_shape",
+  "create_image",
+  "duplicate_nodes",
+  "reparent_nodes",
+  "delete_nodes",
+]);
+
+const requireEditorMode = (toolName: RequestType): void => {
+  // Dev Mode is read-only — every figma.create*/setter throws at runtime there,
+  // and the resulting errors are confusing. Reject up front with a clear hint.
+  if (figma.editorType === "dev") {
+    throw new Error(
+      `${toolName} requires the plugin to be opened in Figma's design editor (Dev Mode is read-only). Switch to the design editor and re-run.`
+    );
+  }
+};
+
 const handleRequest = async (
   request: ServerRequest
 ): Promise<PluginResponse> => {
   try {
+    if (EDIT_REQUEST_TYPES.has(request.type)) {
+      requireEditorMode(request.type);
+    }
     switch (request.type) {
       case "get_document":
         return {
