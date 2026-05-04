@@ -271,6 +271,14 @@ export const createShapeInput = createShapeShape
   .refine(
     (value) => value.strokeOpacity === undefined || value.strokeHex !== undefined,
     "strokeHex is required when strokeOpacity is provided",
+  )
+  .refine(
+    (value) => value.shapeType !== "LINE" || value.fillHex === undefined,
+    "LINE shapes do not support fillHex — use strokeHex instead",
+  )
+  .refine(
+    (value) => value.shapeType !== "LINE" || value.strokeHex !== undefined,
+    "LINE shapes require strokeHex (lines have no fill and would be invisible otherwise)",
   );
 
 export const createImageInput = z.object({

@@ -1063,30 +1063,36 @@ const handleRequest = async (
           node.rotation = params.rotation;
         }
 
-        if (shapeType === "LINE") {
-          if (!("strokes" in node)) {
-            throw new Error(`Line node does not support strokes: ${node.id}`);
-          }
-          const strokeHex =
-            typeof params.strokeHex === "string" ? params.strokeHex : "#000000";
-          node.strokes = [
-            {
-              type: "SOLID",
-              color: parseHexColor(strokeHex),
-              opacity:
-                typeof params.strokeOpacity === "number" ? params.strokeOpacity : 1,
-            },
-          ];
-          if (
-            "strokeWeight" in node &&
-            typeof params.strokeWeight === "number"
-          ) {
-            node.strokeWeight = params.strokeWeight;
-          }
-        } else if (typeof params.fillHex === "string") {
+        if (shapeType === "LINE" && typeof params.fillHex === "string") {
+          throw new Error("LINE shapes do not support fillHex — use strokeHex instead");
+        }
+
+        if (typeof params.fillHex === "string") {
           const fillOpacity =
             typeof params.fillOpacity === "number" ? params.fillOpacity : undefined;
           setSolidFill(node, params.fillHex, fillOpacity);
+        }
+
+        if (shapeType === "LINE" && typeof params.strokeHex !== "string") {
+          throw new Error(
+            "LINE shapes require strokeHex (lines have no fill, so without a stroke they are invisible)"
+          );
+        }
+
+        if (typeof params.strokeHex === "string") {
+          if (!("strokes" in node)) {
+            throw new Error(`Node does not support strokes: ${node.id}`);
+          }
+          const strokeOpacity =
+            typeof params.strokeOpacity === "number" ? params.strokeOpacity : undefined;
+          setSolidFill(node, params.strokeHex, strokeOpacity, "stroke");
+        }
+
+        if (
+          "strokeWeight" in node &&
+          typeof params.strokeWeight === "number"
+        ) {
+          node.strokeWeight = params.strokeWeight;
         }
 
         if (typeof params.cornerRadius === "number" && "cornerRadius" in node) {
