@@ -28,8 +28,17 @@ type PluginResponse = {
   error?: string;
 };
 
+let cachedFallbackFileKey: string | null = null;
+
+const generateFallbackFileKey = (): string => {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `unsaved-${Date.now().toString(36)}-${random}`;
+};
+
 const getFileKey = (): string => {
-  // figma.fileKey is available for saved files; fall back to root name
+  // figma.fileKey is available for saved files; otherwise we generate a
+  // session-scoped fallback so unsaved files (and files with duplicate names)
+  // still get a stable, unique identifier for this plugin instance.
   try {
     if (typeof figma.fileKey === "string" && figma.fileKey) {
       return figma.fileKey;
@@ -37,7 +46,16 @@ const getFileKey = (): string => {
   } catch {
     // fileKey may not be available in all contexts
   }
-  return figma.root.name;
+  if (!cachedFallbackFileKey) {
+    cachedFallbackFileKey = generateFallbackFileKey();
+    console.warn(
+      `[figma-mcp-bridge] figma.fileKey unavailable for "${figma.root.name}". ` +
+        `Using session fallback key "${cachedFallbackFileKey}". ` +
+        `If you encounter this in a built plugin, please report at ` +
+        `https://github.com/gethopp/figma-mcp-bridge/issues with steps to reproduce.`
+    );
+  }
+  return cachedFallbackFileKey;
 };
 
 const sendStatus = () => {
