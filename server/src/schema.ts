@@ -110,7 +110,7 @@ const rpcToArgs: Record<
 > = {
   get_document: (_nodeIds, params) => ({ ...params }),
   get_selection: (_nodeIds, params) => ({ ...params }),
-  get_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  get_node: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
   get_styles: (_nodeIds, params) => ({ ...params }),
   get_metadata: (_nodeIds, params) => ({ ...params }),
   get_design_context: (_nodeIds, params) => ({ ...params }),

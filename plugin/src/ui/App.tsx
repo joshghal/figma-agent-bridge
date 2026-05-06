@@ -82,7 +82,11 @@ export default function App() {
   useEffect(() => {
     if (!status.fileKey) return;
 
+    let disposed = false;
+
     const connect = () => {
+      if (disposed) return;
+
       if (socketRef.current) {
         socketRef.current.close();
       }
@@ -97,6 +101,7 @@ export default function App() {
       };
 
       ws.onclose = () => {
+        if (disposed || socketRef.current !== ws) return;
         setConnected(false);
         if (reconnectTimer.current === null) {
           reconnectTimer.current = window.setTimeout(() => {
@@ -107,6 +112,7 @@ export default function App() {
       };
 
       ws.onerror = () => {
+        if (disposed || socketRef.current !== ws) return;
         setConnected(false);
       };
 
@@ -119,12 +125,18 @@ export default function App() {
     connect();
 
     return () => {
+      disposed = true;
       if (reconnectTimer.current !== null) {
         window.clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
       }
       if (socketRef.current) {
-        socketRef.current.close();
+        const ws = socketRef.current;
+        ws.onopen = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.onmessage = null;
+        ws.close();
         socketRef.current = null;
       }
     };

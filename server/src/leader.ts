@@ -47,7 +47,11 @@ export class Leader {
       server.on(
         "upgrade",
         (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-          if (req.url?.startsWith("/ws")) {
+          const pathname = new URL(
+            req.url ?? "",
+            "http://localhost"
+          ).pathname;
+          if (pathname === "/ws") {
             this.bridge.handleUpgrade(req, socket, head);
           } else {
             socket.destroy();
