@@ -107,7 +107,7 @@ export function registerTools(
 
   server.tool(
     "get_node",
-    "Get a specific Figma node by ID. Must use colon format, e.g. '4029:12345', never use hyphens. When multiple files are connected, specify fileKey.",
+    "Get a specific Figma node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_node.shape,
     async ({ nodeId, fileKey }): Promise<ToolResult> => {
       return renderResponse(() => node.send("get_node", [nodeId], fileKey));
