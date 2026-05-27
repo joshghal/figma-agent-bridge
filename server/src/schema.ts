@@ -15,6 +15,14 @@ export const figmaNodeId = z
     "Node ID must use colon format, e.g. '4029:12345', or instance-child format 'I12740:17806;12740:17793'"
   );
 const exportFormat = z.enum(["PNG", "SVG", "JPG", "PDF"]);
+const hexColor = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "Color must be a hex value like '#FFAA00'");
+const textAlignHorizontal = z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]);
+const textAlignVertical = z.enum(["TOP", "CENTER", "BOTTOM"]);
+const textAutoResize = z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]);
+const shapeType = z.enum(["RECTANGLE", "ELLIPSE", "LINE"]);
+const imageScaleMode = z.enum(["FILL", "FIT"]);
 
 const fileKeyField = z
   .string()
@@ -22,6 +30,467 @@ const fileKeyField = z
   .describe(
     "The fileKey of the Figma file to query. Required when multiple files are connected. Use list_files to see connected files."
   );
+
+const gradientStop = z.object({
+  position: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("Stop position from 0 (start of gradient) to 1 (end)"),
+  hex: hexColor.describe("Stop color as hex"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional per-stop alpha (default 1)"),
+});
+
+const gradientTransform = z
+  .tuple([
+    z.tuple([z.number(), z.number(), z.number()]),
+    z.tuple([z.number(), z.number(), z.number()]),
+  ])
+  .describe(
+    "2x3 affine matrix [[a,b,tx],[c,d,ty]] mapping the unit gradient onto the shape (Figma's gradientTransform). Defaults to identity (horizontal left→right)."
+  );
+
+export const setGradientFillInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  gradientType: z
+    .enum(["LINEAR", "RADIAL", "ANGULAR", "DIAMOND"])
+    .optional()
+    .describe("Gradient family (default LINEAR)"),
+  gradientStops: z
+    .array(gradientStop)
+    .min(2)
+    .describe("Ordered list of gradient color stops (at least 2)"),
+  gradientTransform: gradientTransform.optional(),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Overall paint opacity (default 1)"),
+  target: z
+    .enum(["fill", "stroke"])
+    .optional()
+    .describe("Apply to fills or strokes (default fill)"),
+  fileKey: fileKeyField,
+});
+
+export const setNodePropertiesInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  name: z.string().optional().describe("Optional new node name"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Optional width"),
+  height: z.number().positive().optional().describe("Optional height"),
+  rotation: z.number().optional().describe("Optional rotation in degrees"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional opacity from 0 to 1"),
+  visible: z.boolean().optional().describe("Optional visibility"),
+  cornerRadius: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Optional corner radius"),
+  fileKey: fileKeyField,
+});
+
+export const setSolidFillInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  hex: hexColor.describe("Solid color as hex (e.g. '#FFAA00')"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional paint opacity from 0 to 1 (default 1)"),
+  target: z
+    .enum(["fill", "stroke"])
+    .optional()
+    .describe("Apply to fills or strokes (default fill)"),
+  fileKey: fileKeyField,
+});
+
+const blendMode = z.enum([
+  "PASS_THROUGH",
+  "NORMAL",
+  "DARKEN",
+  "MULTIPLY",
+  "LINEAR_BURN",
+  "COLOR_BURN",
+  "LIGHTEN",
+  "SCREEN",
+  "LINEAR_DODGE",
+  "COLOR_DODGE",
+  "OVERLAY",
+  "SOFT_LIGHT",
+  "HARD_LIGHT",
+  "DIFFERENCE",
+  "EXCLUSION",
+  "HUE",
+  "SATURATION",
+  "COLOR",
+  "LUMINOSITY",
+]);
+
+const shadowEffect = z.object({
+  type: z.enum(["DROP_SHADOW", "INNER_SHADOW"]),
+  color: hexColor.describe("Shadow color as hex"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Shadow alpha 0..1 (default 1)"),
+  offset: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+    })
+    .describe("Shadow offset in pixels"),
+  radius: z.number().min(0).describe("Blur radius (>= 0)"),
+  spread: z
+    .number()
+    .optional()
+    .describe(
+      "Expand/contract distance (default 0). Only honored on rects/ellipses, or on frames/components/instances with visible fills and clipsContent."
+    ),
+  blendMode: blendMode.optional().describe("Default NORMAL"),
+  visible: z.boolean().optional().describe("Default true"),
+});
+
+const blurEffect = z.object({
+  type: z.enum(["LAYER_BLUR", "BACKGROUND_BLUR"]),
+  radius: z.number().min(0).describe("Blur radius (>= 0)"),
+  visible: z.boolean().optional().describe("Default true"),
+});
+
+export const setSelectionInput = z.object({
+  nodeIds: z
+    .array(figmaNodeId)
+    .describe("Node IDs to select. Pass [] to clear the selection."),
+  fileKey: fileKeyField,
+});
+
+export const scrollAndZoomIntoViewInput = z.object({
+  nodeIds: z
+    .array(figmaNodeId)
+    .min(1)
+    .describe("Node IDs to frame in the viewport"),
+  fileKey: fileKeyField,
+});
+
+export const groupNodesInput = z.object({
+  nodeIds: z
+    .array(figmaNodeId)
+    .min(1)
+    .describe("Node IDs to group. Must share a common parent."),
+  parentId: figmaNodeId
+    .optional()
+    .describe(
+      "Optional explicit parent for the new group. Defaults to the shared parent of the input nodes."
+    ),
+  name: z.string().optional().describe("Optional name for the new group"),
+  fileKey: fileKeyField,
+});
+
+export const ungroupNodeInput = z.object({
+  nodeId: figmaNodeId.describe(
+    "Group or frame to ungroup. Children move up to its parent and the wrapper is removed."
+  ),
+  fileKey: fileKeyField,
+});
+
+export const setEffectsInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  effects: z
+    .array(z.discriminatedUnion("type", [shadowEffect, blurEffect]))
+    .describe(
+      "Full replacement list of effects. Pass [] to clear all effects. Each entry is a drop/inner shadow or a layer/background blur."
+    ),
+  fileKey: fileKeyField,
+});
+
+export const setStrokePropertiesInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  strokeWeight: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Stroke thickness in pixels"),
+  strokeAlign: z
+    .enum(["INSIDE", "OUTSIDE", "CENTER"])
+    .optional()
+    .describe("How the stroke is positioned relative to the geometry edge"),
+  dashPattern: z
+    .array(z.number().min(0))
+    .optional()
+    .describe(
+      "Dash pattern as [dash, gap, dash, gap, ...] in pixels. Pass [] for a solid stroke."
+    ),
+  strokeCap: z
+    .enum([
+      "NONE",
+      "ROUND",
+      "SQUARE",
+      "ARROW_LINES",
+      "ARROW_EQUILATERAL",
+    ])
+    .optional()
+    .describe("End-cap style (only meaningful on open paths/lines)"),
+  strokeJoin: z
+    .enum(["MITER", "BEVEL", "ROUND"])
+    .optional()
+    .describe("Corner join style"),
+  fileKey: fileKeyField,
+});
+
+export const setAutoLayoutInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update (must be a frame)"),
+  layoutMode: z
+    .enum(["NONE", "HORIZONTAL", "VERTICAL"])
+    .optional()
+    .describe("Auto-layout direction. 'NONE' disables auto-layout."),
+  itemSpacing: z
+    .number()
+    .optional()
+    .describe("Gap between children along the primary axis (pixels)"),
+  counterAxisSpacing: z
+    .number()
+    .optional()
+    .describe("Gap between wrapped rows/columns (only when layoutWrap=WRAP)"),
+  paddingTop: z.number().min(0).optional(),
+  paddingRight: z.number().min(0).optional(),
+  paddingBottom: z.number().min(0).optional(),
+  paddingLeft: z.number().min(0).optional(),
+  primaryAxisAlignItems: z
+    .enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN"])
+    .optional()
+    .describe("Alignment along the primary axis"),
+  counterAxisAlignItems: z
+    .enum(["MIN", "MAX", "CENTER", "BASELINE"])
+    .optional()
+    .describe("Alignment along the counter axis"),
+  primaryAxisSizingMode: z
+    .enum(["FIXED", "AUTO"])
+    .optional()
+    .describe("AUTO = hug contents along primary axis"),
+  counterAxisSizingMode: z
+    .enum(["FIXED", "AUTO"])
+    .optional()
+    .describe("AUTO = hug contents along counter axis"),
+  layoutWrap: z
+    .enum(["NO_WRAP", "WRAP"])
+    .optional()
+    .describe("Allow children to wrap onto multiple rows/columns"),
+  fileKey: fileKeyField,
+});
+
+export const createFrameInput = z.object({
+  name: z.string().optional().describe("Optional frame name"),
+  parentId: figmaNodeId
+    .optional()
+    .describe("Optional parent node ID to append the frame into"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Frame width"),
+  height: z.number().positive().optional().describe("Frame height"),
+  fillHex: hexColor
+    .optional()
+    .describe("Optional solid fill color as hex"),
+  fillOpacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional solid fill opacity from 0 to 1"),
+  fileKey: fileKeyField,
+});
+
+export const setTextPropertiesShape = z.object({
+  nodeId: figmaNodeId.describe("The text node ID to update"),
+  fontFamily: z.string().optional().describe("Optional font family"),
+  fontStyle: z.string().optional().describe("Optional font style"),
+  fontSize: z.number().positive().optional().describe("Optional font size"),
+  textAlignHorizontal: textAlignHorizontal
+    .optional()
+    .describe("Optional horizontal alignment"),
+  textAlignVertical: textAlignVertical
+    .optional()
+    .describe("Optional vertical alignment"),
+  textAutoResize: textAutoResize
+    .optional()
+    .describe("Optional text auto-resize mode"),
+  lineHeightPx: z
+    .number()
+    .positive()
+    .optional()
+    .describe("Optional line height in pixels"),
+  letterSpacingPx: z
+    .number()
+    .optional()
+    .describe("Optional letter spacing in pixels"),
+  fillHex: hexColor.optional().describe("Optional text fill color as hex"),
+  fillOpacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional text fill opacity from 0 to 1"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Optional width"),
+  height: z.number().positive().optional().describe("Optional height"),
+  fileKey: fileKeyField,
+});
+
+export const setTextPropertiesInput = setTextPropertiesShape
+  .refine(
+    (value) =>
+      value.fontFamily !== undefined ||
+      value.fontStyle !== undefined ||
+      value.fontSize !== undefined ||
+      value.textAlignHorizontal !== undefined ||
+      value.textAlignVertical !== undefined ||
+      value.textAutoResize !== undefined ||
+      value.lineHeightPx !== undefined ||
+      value.letterSpacingPx !== undefined ||
+      value.fillHex !== undefined ||
+      value.fillOpacity !== undefined ||
+      value.x !== undefined ||
+      value.y !== undefined ||
+      value.width !== undefined ||
+      value.height !== undefined,
+    "At least one text property must be provided",
+  )
+  .refine(
+    (value) => value.fillOpacity === undefined || value.fillHex !== undefined,
+    "fillHex is required when fillOpacity is provided",
+  );
+
+export const createTextShape = z.object({
+  name: z.string().optional().describe("Optional text node name"),
+  parentId: figmaNodeId
+    .optional()
+    .describe("Optional parent node ID to append the text into"),
+  characters: z.string().optional().describe("Initial text content"),
+  fontFamily: z.string().optional().describe("Font family, defaults to Inter"),
+  fontStyle: z.string().optional().describe("Font style, defaults to Regular"),
+  fontSize: z.number().positive().optional().describe("Optional font size"),
+  textAlignHorizontal: textAlignHorizontal
+    .optional()
+    .describe("Optional horizontal alignment"),
+  textAutoResize: textAutoResize
+    .optional()
+    .describe("Optional text auto-resize mode"),
+  fillHex: hexColor.optional().describe("Optional text fill color as hex"),
+  fillOpacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional text fill opacity from 0 to 1"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Optional width"),
+  height: z.number().positive().optional().describe("Optional height"),
+  fileKey: fileKeyField,
+});
+
+export const createTextInput = createTextShape
+  .refine(
+    (value) => value.fillOpacity === undefined || value.fillHex !== undefined,
+    "fillHex is required when fillOpacity is provided",
+  );
+
+export const createShapeShape = z.object({
+  shapeType: shapeType.describe("Shape type to create"),
+  name: z.string().optional().describe("Optional shape name"),
+  parentId: figmaNodeId
+    .optional()
+    .describe("Optional parent node ID to append the shape into"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Optional width"),
+  height: z.number().positive().optional().describe("Optional height"),
+  rotation: z.number().optional().describe("Optional rotation in degrees"),
+  cornerRadius: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Optional corner radius for supported shapes"),
+  fillHex: hexColor.optional().describe("Optional fill color as hex"),
+  fillOpacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional fill opacity from 0 to 1"),
+  strokeHex: hexColor.optional().describe("Optional stroke color as hex"),
+  strokeOpacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional stroke opacity from 0 to 1"),
+  strokeWeight: z
+    .number()
+    .positive()
+    .optional()
+    .describe("Optional stroke weight"),
+  fileKey: fileKeyField,
+});
+
+export const createShapeInput = createShapeShape
+  .refine(
+    (value) => value.fillOpacity === undefined || value.fillHex !== undefined,
+    "fillHex is required when fillOpacity is provided",
+  )
+  .refine(
+    (value) => value.strokeOpacity === undefined || value.strokeHex !== undefined,
+    "strokeHex is required when strokeOpacity is provided",
+  )
+  .refine(
+    (value) => value.shapeType !== "LINE" || value.fillHex === undefined,
+    "LINE shapes do not support fillHex — use strokeHex instead",
+  )
+  .refine(
+    (value) => value.shapeType !== "LINE" || value.strokeHex !== undefined,
+    "LINE shapes require strokeHex (lines have no fill and would be invisible otherwise)",
+  );
+
+export const createImageInput = z.object({
+  source: z
+    .string()
+    .min(1)
+    .describe(
+      "Image source. Accepts a local file path (absolute or relative to the MCP server cwd), an http/https URL, or a data URI."
+    ),
+  name: z.string().optional().describe("Optional image node name"),
+  parentId: figmaNodeId
+    .optional()
+    .describe("Optional parent node ID to append the image into"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Optional width"),
+  height: z.number().positive().optional().describe("Optional height"),
+  cornerRadius: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Optional corner radius"),
+  scaleMode: imageScaleMode
+    .optional()
+    .describe("How the image should fit its bounds: FILL (default) or FIT"),
+  fileKey: fileKeyField,
+});
 
 export const toolInputSchemas = {
   get_document: z.object({
@@ -73,6 +542,122 @@ export const toolInputSchemas = {
       .number()
       .optional()
       .describe("Export scale for raster formats (default 2)"),
+    fileKey: fileKeyField,
+  }),
+
+  set_node_visibility: z.object({
+    items: z
+      .array(
+        z.object({
+          nodeId: figmaNodeId.describe("The node ID to modify"),
+          visible: z.boolean().describe("true to show, false to hide"),
+        })
+      )
+      .min(1)
+      .describe("List of nodes with their target visibility"),
+    fileKey: fileKeyField,
+  }),
+
+  set_text_content: z.object({
+    nodeId: figmaNodeId.describe("The text node ID to update"),
+    text: z.string().describe("The new text content"),
+    fileKey: fileKeyField,
+  }),
+
+  set_text_properties: setTextPropertiesInput,
+
+  set_gradient_fill: setGradientFillInput,
+
+  set_solid_fill: setSolidFillInput,
+
+  set_effects: setEffectsInput,
+
+  set_stroke_properties: setStrokePropertiesInput.refine(
+    (value) =>
+      value.strokeWeight !== undefined ||
+      value.strokeAlign !== undefined ||
+      value.dashPattern !== undefined ||
+      value.strokeCap !== undefined ||
+      value.strokeJoin !== undefined,
+    "At least one stroke property must be provided"
+  ),
+
+  set_auto_layout: setAutoLayoutInput.refine(
+    (value) =>
+      value.layoutMode !== undefined ||
+      value.itemSpacing !== undefined ||
+      value.counterAxisSpacing !== undefined ||
+      value.paddingTop !== undefined ||
+      value.paddingRight !== undefined ||
+      value.paddingBottom !== undefined ||
+      value.paddingLeft !== undefined ||
+      value.primaryAxisAlignItems !== undefined ||
+      value.counterAxisAlignItems !== undefined ||
+      value.primaryAxisSizingMode !== undefined ||
+      value.counterAxisSizingMode !== undefined ||
+      value.layoutWrap !== undefined,
+    "At least one auto-layout property must be provided"
+  ),
+
+  set_node_properties: setNodePropertiesInput.refine(
+    (value) =>
+      value.name !== undefined ||
+      value.x !== undefined ||
+      value.y !== undefined ||
+      value.width !== undefined ||
+      value.height !== undefined ||
+      value.rotation !== undefined ||
+      value.opacity !== undefined ||
+      value.visible !== undefined ||
+      value.cornerRadius !== undefined,
+    "At least one property must be provided",
+  ),
+
+  create_frame: createFrameInput
+    .refine(
+      (value) => value.fillOpacity === undefined || value.fillHex !== undefined,
+      "fillHex is required when fillOpacity is provided",
+    ),
+
+  create_text: createTextInput,
+
+  create_shape: createShapeInput,
+
+  create_image: createImageInput,
+
+  duplicate_nodes: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .min(1)
+      .describe("List of node IDs to duplicate"),
+    fileKey: fileKeyField,
+  }),
+
+  reparent_nodes: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .min(1)
+      .describe("List of node IDs to move"),
+    parentId: figmaNodeId.describe("Destination parent node ID"),
+    fileKey: fileKeyField,
+  }),
+
+  group_nodes: groupNodesInput,
+
+  ungroup_node: ungroupNodeInput,
+
+  set_selection: setSelectionInput,
+
+  scroll_and_zoom_into_view: scrollAndZoomIntoViewInput,
+
+  delete_nodes: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .min(1)
+      .describe("List of node IDs to delete"),
+    confirm: z
+      .boolean()
+      .describe("Must be true to confirm deletion"),
     fileKey: fileKeyField,
   }),
 
@@ -130,6 +715,26 @@ const rpcToArgs: Record<
   get_design_context: (_nodeIds, params) => ({ ...params }),
   get_variable_defs: (_nodeIds, params) => ({ ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
+  set_node_visibility: (_nodeIds, params) => ({ ...params }),
+  set_text_content: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_text_properties: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_node_properties: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_gradient_fill: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_solid_fill: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_effects: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_stroke_properties: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  set_auto_layout: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  create_frame: (_nodeIds, params) => ({ ...params }),
+  create_text: (_nodeIds, params) => ({ ...params }),
+  create_shape: (_nodeIds, params) => ({ ...params }),
+  create_image: (_nodeIds, params) => ({ ...params }),
+  duplicate_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
+  reparent_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
+  group_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
+  ungroup_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_selection: (nodeIds, params) => ({ nodeIds, ...params }),
+  scroll_and_zoom_into_view: (nodeIds, params) => ({ nodeIds, ...params }),
+  delete_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
 };
 
