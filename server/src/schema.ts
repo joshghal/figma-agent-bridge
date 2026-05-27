@@ -1,9 +1,19 @@
 import { z } from "zod";
 
-/** Figma node IDs use colon-separated format, e.g. "4029:12345". */
+/**
+ * Figma node IDs:
+ *   - top-level node:        "4029:12345"
+ *   - child inside INSTANCE: "I12740:17806;12740:17793" (and deeper, semicolon-separated)
+ *
+ * Both forms are valid for figma.getNodeById and are returned as-is by the plugin
+ * from get_selection / get_design_context.
+ */
 export const figmaNodeId = z
   .string()
-  .regex(/^\d+:\d+$/, "Node ID must use colon format, e.g. '4029:12345'");
+  .regex(
+    /^(\d+:\d+|I\d+:\d+(;\d+:\d+)+)$/,
+    "Node ID must use colon format, e.g. '4029:12345', or instance-child format 'I12740:17806;12740:17793'"
+  );
 const exportFormat = z.enum(["PNG", "SVG", "JPG", "PDF"]);
 
 const fileKeyField = z
@@ -23,7 +33,9 @@ export const toolInputSchemas = {
   }),
 
   get_node: z.object({
-    nodeId: figmaNodeId.describe("The node ID to fetch"),
+    nodeId: figmaNodeId.describe(
+      "The node ID to fetch. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'."
+    ),
     fileKey: fileKeyField,
   }),
 
@@ -52,7 +64,7 @@ export const toolInputSchemas = {
       .array(figmaNodeId)
       .optional()
       .describe(
-        "Optional list of node IDs to export (colon-separated format, e.g. '4029:12345' — never use hyphens). If empty, exports the current selection",
+        "Optional list of node IDs to export. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. If empty, exports the current selection.",
       ),
     format: exportFormat
       .optional()
@@ -68,7 +80,9 @@ export const toolInputSchemas = {
     items: z
       .array(
         z.object({
-          nodeId: figmaNodeId.describe("The node ID to export"),
+          nodeId: figmaNodeId.describe(
+            "The node ID to export. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'."
+          ),
           outputPath: z
             .string()
             .min(1)
