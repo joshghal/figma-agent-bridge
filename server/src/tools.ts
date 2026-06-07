@@ -209,7 +209,12 @@ export function registerTools(
     toolInputSchemas.set_node_visibility.shape,
     async ({ items, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams("set_node_visibility", undefined, { items }, fileKey)
+        node.sendWithParams(
+          "set_node_visibility",
+          undefined,
+          { items },
+          fileKey
+        )
       );
     }
   );
@@ -234,7 +239,12 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams("set_text_properties", [nodeId], properties, fileKey)
+        node.sendWithParams(
+          "set_text_properties",
+          [nodeId],
+          properties,
+          fileKey
+        )
       );
     }
   );
@@ -248,7 +258,12 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams("set_node_properties", [nodeId], properties, fileKey)
+        node.sendWithParams(
+          "set_node_properties",
+          [nodeId],
+          properties,
+          fileKey
+        )
       );
     }
   );
@@ -291,7 +306,10 @@ export function registerTools(
     "Patch stroke geometry properties: weight, align, dash pattern, cap, join. Use set_solid_fill/set_gradient_fill with target='stroke' to set the paint itself.",
     setStrokePropertiesInput.shape,
     async (args): Promise<ToolResult> => {
-      const parsed = parseToolInput(toolInputSchemas.set_stroke_properties, args);
+      const parsed = parseToolInput(
+        toolInputSchemas.set_stroke_properties,
+        args
+      );
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...params } = parsed.data;
       return renderResponse(() =>
@@ -362,7 +380,10 @@ export function registerTools(
     createImageInput.shape,
     async ({ source, fileKey, ...params }): Promise<ToolResult> => {
       try {
-        const imageBase64 = await loadImageSourceAsBase64(source, process.cwd());
+        const imageBase64 = await loadImageSourceAsBase64(
+          source,
+          process.cwd()
+        );
         return await renderResponse(() =>
           node.sendWithParams(
             "create_image",
@@ -446,7 +467,12 @@ export function registerTools(
     scrollAndZoomIntoViewInput.shape,
     async ({ nodeIds, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams("scroll_and_zoom_into_view", nodeIds, undefined, fileKey)
+        node.sendWithParams(
+          "scroll_and_zoom_into_view",
+          nodeIds,
+          undefined,
+          fileKey
+        )
       );
     }
   );
@@ -639,7 +665,10 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
     await assertSafeHttpUrl(url);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      IMAGE_FETCH_TIMEOUT_MS
+    );
     let resp: Response;
     try {
       resp = await fetch(url, {
@@ -648,7 +677,9 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Timed out fetching image after ${IMAGE_FETCH_TIMEOUT_MS}ms`);
+        throw new Error(
+          `Timed out fetching image after ${IMAGE_FETCH_TIMEOUT_MS}ms`
+        );
       }
       throw err;
     } finally {
@@ -658,18 +689,24 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
     if (resp.status >= 300 && resp.status < 400) {
       const location = resp.headers.get("location");
       if (!location) {
-        throw new Error(`Image redirect missing Location header: ${resp.status}`);
+        throw new Error(
+          `Image redirect missing Location header: ${resp.status}`
+        );
       }
       redirects += 1;
       if (redirects > MAX_IMAGE_REDIRECTS) {
-        throw new Error(`Image fetch exceeded ${MAX_IMAGE_REDIRECTS} redirects`);
+        throw new Error(
+          `Image fetch exceeded ${MAX_IMAGE_REDIRECTS} redirects`
+        );
       }
       url = new URL(location, url);
       continue;
     }
 
     if (!resp.ok) {
-      throw new Error(`Failed to fetch image: ${resp.status} ${resp.statusText}`);
+      throw new Error(
+        `Failed to fetch image: ${resp.status} ${resp.statusText}`
+      );
     }
 
     const contentLength = resp.headers.get("content-length");
