@@ -15,6 +15,7 @@ import {
   setNodePropertiesInput,
   setGradientFillInput,
   setSolidFillInput,
+  setEffectsShape,
   setEffectsInput,
   setStrokePropertiesInput,
   setAutoLayoutInput,
@@ -78,6 +79,12 @@ interface SaveScreenshotItemResult {
   error?: string;
 }
 
+/**
+ * Registers all Figma bridge tools on the given MCP server.
+ * @param server - The MCP server instance.
+ * @param node - The node coordinator for leader/follower routing.
+ * @param port - The port used for follower-to-leader HTTP calls.
+ */
 export function registerTools(
   server: McpServer,
   node: Node,
@@ -293,8 +300,11 @@ export function registerTools(
   server.tool(
     "set_effects",
     "Replace a node's effects list (drop/inner shadows, layer/background blurs). Pass an empty array to clear all effects. Each entry mirrors the shape returned by get_node's `effects` field.",
-    setEffectsInput.shape,
-    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+    setEffectsShape.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(setEffectsInput, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...params } = parsed.data;
       return renderResponse(() =>
         node.sendWithParams("set_effects", [nodeId], params, fileKey)
       );
@@ -524,6 +534,15 @@ export function registerTools(
   );
 }
 
+/**
+ * Saves screenshots for multiple nodes to the local filesystem in batch.
+ * @param sender - Sender that forwards get_screenshot requests to the plugin.
+ * @param items - Screenshot save operations to execute.
+ * @param format - Default export format override.
+ * @param scale - Default export scale override for raster formats.
+ * @param clip - Default clipping override for saved screenshots.
+ * @returns Aggregate result with per-item outcomes.
+ */
 export async function executeSaveScreenshots(
   sender: ScreenshotSender,
   items: SaveScreenshotItemInput[],
@@ -564,6 +583,11 @@ export async function executeSaveScreenshots(
   };
 }
 
+/**
+ * Wraps a bridge call and converts the result into a tool result.
+ * @param fn - Bridge call to execute.
+ * @returns Tool result with the bridge response or an error message.
+ */
 async function renderResponse(
   fn: () => Promise<BridgeResponse>
 ): Promise<ToolResult> {
@@ -591,6 +615,12 @@ async function renderResponse(
   }
 }
 
+/**
+ * Parses raw tool arguments with a Zod schema and returns a typed result or a tool error.
+ * @param schema - Zod schema to validate against.
+ * @param args - Raw arguments from the MCP client.
+ * @returns Parsed data on success, or an error tool result on failure.
+ */
 function parseToolInput<T>(
   schema: z.ZodType<T>,
   args: unknown
@@ -609,6 +639,12 @@ function parseToolInput<T>(
   };
 }
 
+/**
+ * Resolves an output path relative to the workspace and ensures it stays inside it.
+ * @param outputPath - Relative or absolute output path.
+ * @param workspaceRoot - Root directory that must contain the resolved path.
+ * @returns Absolute path inside the workspace root.
+ */
 function resolveAndValidateOutputPath(
   outputPath: string,
   workspaceRoot: string
@@ -626,6 +662,12 @@ function resolveAndValidateOutputPath(
   return resolvedPath;
 }
 
+/**
+ * Loads an image source as a base64 string from a URL, data URI, or local file.
+ * @param source - Image source: URL, data URI, or local file path.
+ * @param workspaceRoot - Root directory for resolving relative local paths.
+ * @returns Base64-encoded image bytes.
+ */
 async function loadImageSourceAsBase64(
   source: string,
   workspaceRoot: string
@@ -657,6 +699,11 @@ async function loadImageSourceAsBase64(
   return bytes.toString("base64");
 }
 
+/**
+ * Fetches image bytes from a remote URL with redirect and timeout limits.
+ * @param source - HTTP or HTTPS image URL.
+ * @returns Raw image bytes.
+ */
 async function fetchImageBytes(source: string): Promise<Buffer> {
   let url = new URL(source);
   let redirects = 0;
@@ -724,6 +771,10 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
   }
 }
 
+/**
+ * Validates that an image URL uses a safe public HTTP(S) endpoint.
+ * @param url - URL to validate.
+ */
 async function assertSafeHttpUrl(url: URL): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Image URL must use http or https");
@@ -750,6 +801,11 @@ async function assertSafeHttpUrl(url: URL): Promise<void> {
   }
 }
 
+/**
+ * Checks whether an IP address is in a private, loopback, or otherwise blocked range.
+ * @param address - IPv4 or IPv6 address string.
+ * @returns True if the address is blocked for SSRF protection.
+ */
 function isBlockedIp(address: string): boolean {
   if (isIP(address) === 4) {
     const [a, b] = address.split(".").map(Number);
@@ -780,6 +836,11 @@ function isBlockedIp(address: string): boolean {
   );
 }
 
+/**
+ * Strips surrounding brackets from an IPv6 hostname so it can be parsed as an IP.
+ * @param hostname - Hostname string, possibly bracketed.
+ * @returns Normalized hostname without brackets.
+ */
 function normalizeHostname(hostname: string): string {
   if (hostname.startsWith("[") && hostname.endsWith("]")) {
     return hostname.slice(1, -1);
@@ -787,6 +848,12 @@ function normalizeHostname(hostname: string): string {
   return hostname;
 }
 
+/**
+ * Reads a response body up to a maximum byte limit.
+ * @param resp - Fetch response with a readable body.
+ * @param maxBytes - Maximum number of bytes to accept.
+ * @returns Concatenated response bytes.
+ */
 async function readBoundedResponse(
   resp: Response,
   maxBytes: number
@@ -808,6 +875,11 @@ async function readBoundedResponse(
   return Buffer.concat(chunks, total);
 }
 
+/**
+ * Infers an export format from a file path extension.
+ * @param outputPath - Output file path.
+ * @returns Export format, or null if the extension is unrecognized.
+ */
 function inferFormatFromPath(outputPath: string): ExportFormat | null {
   const ext = path.extname(outputPath).toLowerCase();
   switch (ext) {
@@ -825,6 +897,12 @@ function inferFormatFromPath(outputPath: string): ExportFormat | null {
   }
 }
 
+/**
+ * Resolves the final export format, ensuring it does not conflict with the file extension.
+ * @param format - Explicitly requested format.
+ * @param inferredFormat - Format inferred from the output path extension.
+ * @returns Resolved export format.
+ */
 function resolveExportFormat(
   format: ExportFormat | undefined,
   inferredFormat: ExportFormat | null
@@ -837,6 +915,11 @@ function resolveExportFormat(
   return format ?? inferredFormat ?? "PNG";
 }
 
+/**
+ * Extracts and validates the first screenshot export from plugin response data.
+ * @param data - Plugin response payload.
+ * @returns Validated screenshot export object.
+ */
 function getSingleScreenshotExport(data: unknown): ScreenshotExport {
   if (!data || typeof data !== "object") {
     throw new Error("Invalid screenshot response from plugin");
@@ -864,6 +947,17 @@ function getSingleScreenshotExport(data: unknown): ScreenshotExport {
   return screenshot;
 }
 
+/**
+ * Saves a single screenshot item to the local filesystem.
+ * @param sender - Sender that forwards get_screenshot requests to the plugin.
+ * @param item - Screenshot save request.
+ * @param index - Index of this item in the batch.
+ * @param workspaceRoot - Root directory for resolving output paths.
+ * @param defaultFormat - Default export format override.
+ * @param defaultScale - Default export scale override.
+ * @param defaultClip - Default clipping override.
+ * @returns Result of the save operation.
+ */
 async function saveScreenshotItemToFile(
   sender: ScreenshotSender,
   item: SaveScreenshotItemInput,
@@ -933,6 +1027,12 @@ async function saveScreenshotItemToFile(
   }
 }
 
+/**
+ * Writes base64-encoded bytes to a file, creating parent directories as needed.
+ * @param base64 - Base64-encoded file contents.
+ * @param outputPath - Destination file path.
+ * @returns Number of bytes written.
+ */
 async function writeBase64ToFile(
   base64: string,
   outputPath: string
@@ -950,6 +1050,12 @@ async function writeBase64ToFile(
   return bytes.length;
 }
 
+/**
+ * Resolves the effective screenshot scale from item and default values.
+ * @param itemScale - Scale specified for the item.
+ * @param defaultScale - Default scale for the batch.
+ * @returns Positive scale value, or undefined if not applicable.
+ */
 function resolveScale(
   itemScale?: number,
   defaultScale?: number
@@ -961,6 +1067,11 @@ function resolveScale(
   return resolvedScale;
 }
 
+/**
+ * Type guard that checks whether a value is a NodeJS error with an optional code.
+ * @param err - Value to check.
+ * @returns True when the value is an Error instance.
+ */
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error;
 }
