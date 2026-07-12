@@ -28,7 +28,14 @@ type RequestType =
   | "ungroup_node"
   | "set_selection"
   | "scroll_and_zoom_into_view"
-  | "delete_nodes";
+  | "delete_nodes"
+  | "get_motion_styles"
+  | "get_node_motion"
+  | "apply_animation_style"
+  | "remove_animation_style"
+  | "apply_manual_keyframe_track"
+  | "remove_manual_keyframe_track"
+  | "set_timeline_duration";
 
 type ServerRequestParams = Record<string, unknown> & {
   format?: "PNG" | "SVG" | "JPG" | "PDF";
@@ -41,6 +48,13 @@ type ServerRequestParams = Record<string, unknown> & {
    */
   clip?: boolean;
   depth?: number;
+  styleId?: string;
+  animationStyleId?: string;
+  animationStyleData?: Record<string, unknown>;
+  field?: any;
+  track?: any;
+  timelineId?: string;
+  duration?: number;
 };
 
 type ServerRequest = {
@@ -142,6 +156,9 @@ const getTextNodeById = async (nodeId: string): Promise<TextNode> => {
 
 const supportsChildren = (node: BaseNode): node is BaseNode & ChildrenMixin =>
   "appendChild" in node;
+
+const isMotionNode = (node: SceneNode): node is SceneNode & MotionNodeMixin =>
+  "applyAnimationStyle" in node;
 
 const getParentNodeById = async (
   parentId: string
@@ -346,6 +363,11 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "group_nodes",
   "ungroup_node",
   "delete_nodes",
+  "apply_animation_style",
+  "remove_animation_style",
+  "apply_manual_keyframe_track",
+  "remove_manual_keyframe_track",
+  "set_timeline_duration",
 ]);
 
 const requireEditorMode = (toolName: RequestType): void => {
@@ -1647,6 +1669,149 @@ const handleRequest = async (
           data: {
             deletedCount: deletions.length,
             deletions,
+          },
+        };
+      }
+      case "get_motion_styles": {
+        const motion = figma.motion;
+        if (!motion || typeof motion.figmaAnimationStyles !== "function") {
+          throw new Error("figma.motion.figmaAnimationStyles is not available in this Figma version");
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            styles: motion.figmaAnimationStyles(),
+          },
+        };
+      }
+      case "get_node_motion": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) throw new Error("nodeIds is required for get_node_motion");
+        const node = await getSceneNodeById(nodeId);
+        if (!isMotionNode(node)) {
+          throw new Error(`Node does not support animations: ${nodeId}`);
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            animationStyles: node.animationStyles,
+            animations: node.animations,
+            manualKeyframeTracks: node.manualKeyframeTracks,
+            timelines: node.timelines,
+          },
+        };
+      }
+      case "apply_animation_style": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) throw new Error("nodeIds is required for apply_animation_style");
+        const styleId = request.params?.styleId;
+        if (typeof styleId !== "string") throw new Error("styleId is required for apply_animation_style");
+        const node = await getSceneNodeById(nodeId);
+        if (!isMotionNode(node)) {
+          throw new Error(`Node does not support applyAnimationStyle: ${nodeId}`);
+        }
+        const animationStyleData = request.params?.animationStyleData as AnimationStyleConfiguration | undefined;
+        node.applyAnimationStyle(styleId, animationStyleData);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            animationStyles: node.animationStyles,
+          },
+        };
+      }
+      case "remove_animation_style": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) throw new Error("nodeIds is required for remove_animation_style");
+        const node = await getSceneNodeById(nodeId);
+        if (!isMotionNode(node)) {
+          throw new Error(`Node does not support removeAnimationStyle: ${nodeId}`);
+        }
+        const animationStyleId = request.params?.animationStyleId;
+        if (typeof animationStyleId === "string") {
+          node.removeAnimationStyle(animationStyleId);
+        } else {
+          const appliedStyles = node.animationStyles || [];
+          for (const style of appliedStyles) {
+            node.removeAnimationStyle(style.id);
+          }
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            animationStyles: node.animationStyles,
+          },
+        };
+      }
+
+      case "apply_manual_keyframe_track": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) throw new Error("nodeIds is required for apply_manual_keyframe_track");
+        const field = request.params?.field;
+        const track = request.params?.track;
+        if (!field || !track) throw new Error("field and track are required for apply_manual_keyframe_track");
+        
+        const node = await getSceneNodeById(nodeId);
+        if (!isMotionNode(node)) {
+          throw new Error(`Node does not support applyManualKeyframeTrack: ${nodeId}`);
+        }
+        node.applyManualKeyframeTrack(field as KeyframeField, track as ManualKeyframeTrackInput);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { 
+            nodeId: node.id,
+            manualKeyframeTracks: node.manualKeyframeTracks,
+          },
+        };
+      }
+
+      case "remove_manual_keyframe_track": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) throw new Error("nodeIds is required for remove_manual_keyframe_track");
+        const field = request.params?.field;
+        if (!field) throw new Error("field is required for remove_manual_keyframe_track");
+        
+        const node = await getSceneNodeById(nodeId);
+        if (!isMotionNode(node)) {
+          throw new Error(`Node does not support removeManualKeyframeTrack: ${nodeId}`);
+        }
+        node.removeManualKeyframeTrack(field as KeyframeField);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { 
+            nodeId: node.id,
+            manualKeyframeTracks: node.manualKeyframeTracks,
+          },
+        };
+      }
+
+      case "set_timeline_duration": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) throw new Error("nodeIds is required for set_timeline_duration");
+        const timelineId = request.params?.timelineId;
+        const duration = request.params?.duration;
+        if (typeof timelineId !== "string" || typeof duration !== "number") {
+          throw new Error("timelineId and duration are required for set_timeline_duration");
+        }
+        
+        const node = await getSceneNodeById(nodeId);
+        if (!isMotionNode(node)) {
+          throw new Error(`Node does not support setTimelineDuration: ${nodeId}`);
+        }
+        node.setTimelineDuration(timelineId, duration);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { 
+            nodeId: node.id,
+            timelines: node.timelines,
           },
         };
       }

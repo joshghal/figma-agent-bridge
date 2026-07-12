@@ -10,6 +10,11 @@ import { VERSION } from "./version.js";
 const PORT = 1994;
 
 async function main(): Promise<void> {
+
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled rejection:", reason);
+  });
+
   const node = new Node(PORT);
   const election = new Election(PORT, node);
   await election.start();
@@ -24,6 +29,11 @@ async function main(): Promise<void> {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  process.on("uncaughtException", (err) => {
+    console.error("Uncaught exception:", err);
+    shutdown();
+  });
 
   // Create MCP server (stdio transport)
   const server = new McpServer({
