@@ -1,234 +1,87 @@
-# Figma MCP Bridge
+# Figma Agent Bridge
 
-[![Pairing with Hopp](https://gethopp.app/git/hopp-shield.svg?ref=hopp-repo)](https://gethopp.app)
+A self-owned Figma ⇄ AI-agent bridge with **all five capabilities on a free Figma plan** and **zero dependency on Figma's official MCP server**:
 
-- [Demo](#demo)
-- [Quick Start](#quick-start)
-- [Available Tools](#available-tools)
-- [Local development](#local-development)
-- [Structure](#structure)
-- [How it works](#how-it-works)
+| # | Capability | Mechanism | Tools |
+|---|---|---|---|
+| 1 | Read design | Plugin bridge (WebSocket) | `get_document`, `get_node`, `get_screenshot`, `get_variable_defs`, … |
+| 2 | Implement design | Plugin bridge + code execution | `create_frame`, `set_auto_layout`, …, **`execute_code`** |
+| 3 | Create draft/file | Embedded Playwright → `figma.com/new` | **`create_file`** |
+| 4 | Duplicate file | Embedded Playwright → `/duplicate` URL | **`duplicate_file`** |
+| 5 | Sync to a targeted file | Multi-file plugin registry, serialize → rebuild | **`sync_nodes`** |
+| + | List account files | Embedded Playwright → files dashboard | **`list_account_files`** |
 
-<br/>
+Fork of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge) (MIT) — the transport (MCP server *is* the WebSocket server on `:1994`, fileKey-keyed multi-file registry, leader-follower election) is theirs. The `execute_code` pattern follows [southleft/figma-console-mcp](https://github.com/southleft/figma-console-mcp); page tooling ideas from [arinspunk/claude-talk-to-figma-mcp](https://github.com/arinspunk/claude-talk-to-figma-mcp).
 
-<img src="https://raw.githubusercontent.com/gethopp/figma-mcp-bridge/main/logo.png" alt="Figma MCP Bridge" align="center" />
+**📖 New here? Follow [GUIDE.md](GUIDE.md)** — step-by-step setup, tutorials for every workflow (including the duplicate → edit → sync-back loop), and troubleshooting.
 
-<br/>
+## Why
 
-While other amazing Figma MCP servers like [Figma-Context-MCP](https://github.com/GLips/Figma-Context-MCP/) exist, one issues is the [API limiting](https://github.com/GLips/Figma-Context-MCP/issues/258) for free users.
+Figma's REST API is ~6 calls/month on the free plan and its Plugin API cannot create, duplicate, or list files (single-file sandbox) — no existing bridge covers file-level operations. This bridge pairs the Plugin API (full read/write inside open files, free on every plan) with an embedded Playwright browser session (file-level operations Figma exposes only through its web UI).
 
-The limit for free accounts is 6 requests per month, yes **per month**.
+## Architecture
 
-Figma MCP Bridge is a solution to this problem. It is a plugin + MCP server that streams live Figma document data to AI tools without hitting Figma API rate limits, so its Figma MCP for the rest of us ✊
+```
+Claude/agent ⇄ MCP server (stdio, Node)
+                ├─ WS :1994 ⇄ Figma plugin (desktop app, one instance per open file)
+                │    └─ registry keyed by figma.fileKey (multiple files at once)
+                └─ Playwright (persistent Chrome profile at ~/.figma-agent-bridge/browser-profile)
+                     └─ create_file · duplicate_file · list_account_files · figma_login
+```
 
-It supports **multiple Figma files connected simultaneously**; open the plugin in each file and your AI agent can query any of them by `fileKey`. Single-file setups work exactly as before with no changes required.
+## Setup
 
-It also includes a small, opt-in set of **write tools** for safe agent-driven edits — see [Editing Notes](#editing-notes) below.
-
-## Demo
-
-[Watch a demo of building a UI in Cursor with Figma MCP Bridge](https://youtu.be/ouygIhFBx0g)
-
-[![Watch the video](https://img.youtube.com/vi/ouygIhFBx0g/maxresdefault.jpg)](https://youtu.be/ouygIhFBx0g)
-
-
-## Quick Start
-
-### 1. Add the MCP server to your favourite AI tool
-
-Add the following to your AI tool's MCP configuration (e.g. Cursor, Windsurf, Claude Desktop):
+**Server** (register in your MCP client, e.g. `.mcp.json`):
 
 ```json
 {
-  "figma-bridge": {
-    "command": "npx",
-    "args": ["-y", "@gethopp/figma-mcp-bridge"]
+  "mcpServers": {
+    "figma-bridge": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["<repo>/server/dist/index.js"]
+    }
   }
 }
 ```
-
-That's it — no binaries to download or install.
-
-### 2. Add the Figma plugin
-
-Download the plugin from the [latest release](https://github.com/gethopp/figma-mcp-bridge/releases) page, then in Figma go to `Plugins > Development > Import plugin from manifest` and select the `manifest.json` file from the `plugin/` folder.
-
-### 3. Start using it 🎉
-
-Open a Figma file, run the plugin, and start prompting your AI tool. The MCP server will automatically connect to the plugin.
-
-To work across multiple files, just open the plugin in each Figma file. The bridge keeps all connections active and your AI agent can target any of them by `fileKey`.
-
-If you want to know more about how it works, read the [How it works](#how-it-works) section.
-
-## Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_files` | List all connected Figma files (supports multi-file workflows) |
-| `get_document` | Get the current Figma page document tree |
-| `get_selection` | Get the currently selected nodes in Figma |
-| `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`) |
-| `get_styles` | Get all local paint, text, effect, and grid styles |
-| `get_metadata` | Get file name, pages, and current page info |
-| `get_design_context` | Get a depth-limited tree optimized for understanding design context |
-| `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
-| `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
-| `save_screenshots` | Export and save screenshots directly to the local filesystem |
-| `get_motion_styles` | List all available animation presets (beta) |
-| `get_node_motion` | Read a node's current animation styles and properties (beta) |
-| `apply_animation_style` | Apply a preset animation style to a node (beta) |
-| `remove_animation_style` | Remove an applied animation style from a node (beta) |
-| `apply_manual_keyframe_track` | Apply a manual keyframe track to a node property (beta) |
-| `remove_manual_keyframe_track` | Remove a manual keyframe track from a node property (beta) |
-| `set_timeline_duration` | Set the duration of a timeline in seconds (beta) |
-| `set_node_visibility` | Show or hide specific nodes |
-| `set_text_content` | Replace the contents of a text node |
-| `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on a text node |
-| `set_node_properties` | Patch common node properties: name, position, size, visibility, opacity, corner radius |
-| `set_solid_fill` | Replace a node's fill or stroke with a single solid paint |
-| `set_gradient_fill` | Replace a node's fill or stroke with a linear/radial/angular/diamond gradient |
-| `set_effects` | Replace a node's effects list (drop/inner shadows, layer/background blurs) |
-| `set_stroke_properties` | Patch stroke weight, align, dash pattern, cap, and join |
-| `set_auto_layout` | Configure auto-layout direction, padding, gap, alignment, sizing, and wrap |
-| `create_frame` | Create a new frame, optionally under a parent |
-| `create_text` | Create a new text node |
-| `create_shape` | Create a rectangle, ellipse, or line |
-| `create_image` | Create an image-backed rectangle from a local path, URL, or data URI |
-| `duplicate_nodes` | Duplicate nodes in place |
-| `reparent_nodes` | Move nodes into another parent |
-| `group_nodes` | Wrap a list of nodes (sharing a parent) in a new group |
-| `ungroup_node` | Ungroup a group or frame — children move up to its parent |
-| `set_selection` | Set the page selection to a list of node IDs (works in Dev Mode) |
-| `scroll_and_zoom_into_view` | Frame the viewport around the given nodes (works in Dev Mode) |
-| `delete_nodes` | Delete nodes with explicit confirmation |
-
-All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
-
-### Editing Notes
-
-- Edit tools work only when the plugin is opened in Figma's design editor (Dev Mode is read-only — they will return a clear error there).
-- The current user must have permission to edit the target file.
-- `delete_nodes` is intentionally gated behind `confirm: true`.
-- Text edits automatically load the fonts currently used by the target text node before applying the new content.
-- New text nodes default to `Inter Regular` unless a font is provided.
-- `create_image` reads local paths relative to the MCP server working directory unless you pass an absolute path.
-
-### What You Can Build
-
-With the current write surface, an agent can build a basic slide deck in a new empty Figma file: create slide frames, style titles and body copy, lay out rectangles/ellipses/lines for cards and dividers, duplicate slide templates, reparent content into the right frame, and adjust common geometry/visual properties — including solid/gradient paints, shadows and blurs, stroke geometry, and auto-layout configuration.
-
-The current version is intentionally limited — no components/instances, no variables/styles authoring, no per-segment text styling, and no vector boolean operations yet.
-
-## Local development
-
-#### 1. Clone this repository locally
-
-```bash
-git clone git@github.com:gethopp/figma-mcp-bridge.git
-```
-
-#### 2. Build the server
 
 ```bash
 cd server && npm install && npm run build
+cd ../plugin && npm install && npm run build
 ```
 
-#### 3. Build the plugin
+**Plugin** (each teammate, once): Figma **desktop app** → any design file → Plugins → Development → *Import plugin from manifest…* → select `plugin/manifest.json`.
 
-```bash
-cd plugin && bun install && bun run build
-```
+**Per session**: run the *Figma Agent Bridge* plugin in every file you want connected (Figma blocks plugin auto-start — this is an unremovable platform constraint). Keep the panel open; `list_files` shows what's connected.
 
-#### 4. Add the MCP server to your favourite AI tool
+**File ops** (once): call `figma_login` and complete the login in the Chrome window that opens. The session persists in the profile directory.
 
-For local development, add the following to your AI tool's MCP config:
+## Tools added on top of upstream
 
-```json
-{
-  "figma-bridge": {
-    "command": "node",
-    "args": ["/path/to/figma-mcp-bridge/server/dist/index.js"]
-  }
-}
-```
+| Tool | What it does |
+|---|---|
+| `execute_code` | Run arbitrary Plugin-API JavaScript in the file's sandbox (async IIFE, `return` a JSON value). Console output is captured and returned. Covers components, variables, styles, vectors, boolean ops without dedicated tools. 5s default / 60s max timeout. |
+| `get_pages` / `create_page` / `duplicate_page` / `rename_page` / `delete_page` / `set_current_page` | Page CRUD. `duplicate_page` clones a full page (prototype links preserved) — the preferred scratch-copy workflow inside one file. `delete_page` requires `confirm: true`. |
+| `save_version` | Named checkpoint in Figma version history (`figma.saveVersionHistoryAsync`). Call before destructive batches. |
+| `figma_login` | One-time interactive login for the embedded browser. |
+| `create_file` | New blank draft via `figma.com/new`; returns `fileKey` + URL. |
+| `duplicate_file` | Duplicate any viewable file via Figma's documented `/duplicate` URL; copy lands in Drafts; returns the new `fileKey`. |
+| `list_account_files` | Scrape Drafts/Recents from the file browser (best-effort; the only way to list files on a free plan). |
+| `sync_nodes` | Copy subtrees between two *connected* files, either direction. `replace` mode swaps same-ID nodes (duplicates preserve node IDs), `append` adds to the current page. Saves a version checkpoint on the target first. |
 
-## Structure
+Everything upstream still works — see [gethopp's README](https://github.com/gethopp/figma-mcp-bridge#available-tools) for the base read/write tool catalog.
 
-```
-Figma-MCP-Bridge/
-├── plugin/   # Figma plugin (TypeScript/React)
-└── server/   # MCP server (TypeScript/Node.js)
-    └── src/
-        ├── index.ts      # Entry point
-        ├── bridge.ts     # WebSocket bridge to Figma plugin
-        ├── leader.ts     # Leader: HTTP server + bridge
-        ├── follower.ts   # Follower: proxies to leader via HTTP
-        ├── node.ts       # Dynamic leader/follower role switching
-        ├── election.ts   # Leader election & health monitoring
-        ├── tools.ts      # MCP tool definitions
-        └── types.ts      # Shared types
-```
+### `sync_nodes` fidelity
 
-## How it works
+FRAME / TEXT (per-range styling) / RECTANGLE / ELLIPSE / LINE / GROUP rebuild as editable nodes; image fills are transported as bytes. Everything else (vectors, stars, booleans, instances, components) arrives as an **SVG snapshot** — visually faithful, not editable, instances lose component linkage. Rebuilt nodes get new IDs. For highest fidelity prefer same-file workflows (`duplicate_page` → edit → move back).
 
-There are two main components to the Figma MCP Bridge:
+## Known constraints (platform, not fixable)
 
-### 1. The Figma Plugin
+- Plugins must be started manually per file per session; the plugin dies when the file closes.
+- A duplicated/created file must be opened in the desktop app (and the plugin run) before plugin tools can touch it — tool responses remind you.
+- Browser file ops need a logged-in session; expect `LOGIN_REQUIRED` errors until `figma_login` is done. Run file ops from a single server instance (the Chrome profile is locked while open).
+- Writes are refused in Dev Mode; free plan allows 1 variable mode per collection.
 
-The Figma plugin is the user interface for the Figma MCP Bridge. You run this inside the Figma file you want to use the MCP server for, and its responsible for getting you all the information you need.
+## License
 
-### 2. The MCP Server
-
-The MCP server is the core of the Figma MCP Bridge. It maintains a registry of WebSocket connections keyed by `fileKey`, so multiple Figma files can be connected simultaneously. The server is responsible for:
-- Handling WebSocket connections from one or more Figma plugin instances
-- Routing tool calls to the correct file based on `fileKey`
-- Forwarding responses back to the AI client
-- Handling leader election (as we can have only one WS connection to an MCP server at a time)
-
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              FIGMA (Browser)                                │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                         Figma Plugin                                  │  │
-│  │                    (TypeScript/React)                                 │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      │ WebSocket
-                                      │ (ws://localhost:1994/ws)
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          PRIMARY MCP SERVER                                 │
-│                         (Leader on :1994)                                   │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  Bridge                                    Endpoints:               │    │
-│  │  • Manages WebSocket conn                  • /ws    (plugin)        │    │
-│  │  • Forwards requests to plugin             • /ping  (health)        │    │
-│  │  • Routes responses back                   • /rpc   (followers)     │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────────┘
-                           ▲                              ▲
-                           │ HTTP /rpc                    │ HTTP /rpc
-                           │ POST requests                │ POST requests
-                           │                              │
-         ┌─────────────────┴───────────┐    ┌─────────────┴───────────────┐
-         │    FOLLOWER MCP SERVER 1    │    │    FOLLOWER MCP SERVER 2    │
-         │                             │    │                             │
-         │  • Pings leader /ping       │    │  • Pings leader /ping       │
-         │  • Forwards tool calls      │    │  • Forwards tool calls      │
-         │    via HTTP /rpc            │    │    via HTTP /rpc            │
-         │  • If leader dies →         │    │  • If leader dies →         │
-         │    attempts takeover        │    │    attempts takeover        │
-         └─────────────────────────────┘    └─────────────────────────────┘
-                    ▲                                      ▲
-                    │                                      │
-                    │ MCP Protocol                         │ MCP Protocol
-                    │ (stdio)                              │ (stdio)
-                    ▼                                      ▼
-         ┌─────────────────────────────┐    ┌─────────────────────────────┐
-         │      AI Tool / IDE 1        │    │      AI Tool / IDE 2        │
-         │      (e.g., Cursor)         │    │      (e.g., Cursor)         │
-         └─────────────────────────────┘    └─────────────────────────────┘
-```
+MIT — original code © gethopp contributors, modifications © joshghal.

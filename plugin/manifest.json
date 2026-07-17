@@ -1,10 +1,11 @@
 {
-  "name": "Figma MCP Bridge",
-  "id": "figma-mcp-bridge",
+  "name": "Figma Agent Bridge",
+  "id": "figma-agent-bridge",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/index.html",
   "permissions": [],
+  "enablePrivatePluginApi": true,
   "networkAccess": {
     "allowedDomains": ["ws://localhost:1994"],
     "reasoning": "Connects to local MCP server via WebSocket to stream Figma document data to AI tools"

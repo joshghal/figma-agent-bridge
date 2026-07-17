@@ -1,4 +1,11 @@
 import { serializeNode } from "./serializer";
+import {
+  exportNodeData,
+  importNodeData,
+  importImages,
+  type TransferNode,
+  type TransferPayload,
+} from "./transfer";
 
 type RequestType =
   | "get_document"
@@ -35,7 +42,17 @@ type RequestType =
   | "remove_animation_style"
   | "apply_manual_keyframe_track"
   | "remove_manual_keyframe_track"
-  | "set_timeline_duration";
+  | "set_timeline_duration"
+  | "execute_code"
+  | "get_pages"
+  | "create_page"
+  | "duplicate_page"
+  | "rename_page"
+  | "delete_page"
+  | "set_current_page"
+  | "save_version"
+  | "export_node_data"
+  | "import_node_data";
 
 type ServerRequestParams = Record<string, unknown> & {
   format?: "PNG" | "SVG" | "JPG" | "PDF";
@@ -70,6 +87,81 @@ type PluginResponse = {
   data?: unknown;
   error?: string;
 };
+
+type ConsoleEntry = {
+  level: "log" | "info" | "warn" | "error" | "debug";
+  message: string;
+  timestamp: number;
+};
+
+// While an execute_code request is running, its captured console output is
+// collected here so the entries can be returned alongside the result.
+let activeConsoleCapture: ConsoleEntry[] | null = null;
+
+const stringifyConsoleArg = (arg: unknown): string => {
+  if (typeof arg === "string") return arg;
+  if (arg instanceof Error) return arg.message;
+  try {
+    return JSON.stringify(arg);
+  } catch {
+    return String(arg);
+  }
+};
+
+const CONSOLE_LEVELS = ["log", "info", "warn", "error", "debug"] as const;
+for (const level of CONSOLE_LEVELS) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    original(...args);
+    if (activeConsoleCapture) {
+      activeConsoleCapture.push({
+        level,
+        message: args.map(stringifyConsoleArg).join(" "),
+        timestamp: Date.now(),
+      });
+    }
+  };
+}
+
+const MAX_EXECUTE_RESULT_CHARS = 1_000_000;
+
+// Round-trips a value through JSON so eval results are always postMessage-safe
+// (drops functions/symbols, breaks on cycles → falls back to String()).
+const toJsonSafeResult = (
+  value: unknown
+): { result: unknown; truncated: boolean } => {
+  if (value === undefined) return { result: null, truncated: false };
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    json = JSON.stringify(String(value));
+  }
+  if (json === undefined) return { result: null, truncated: false };
+  if (json.length > MAX_EXECUTE_RESULT_CHARS) {
+    return {
+      result: `${json.slice(0, MAX_EXECUTE_RESULT_CHARS)}… [truncated ${
+        json.length - MAX_EXECUTE_RESULT_CHARS
+      } chars — return a smaller value]`,
+      truncated: true,
+    };
+  }
+  return { result: JSON.parse(json), truncated: false };
+};
+
+const getPageById = async (pageId: string): Promise<PageNode> => {
+  const node = await figma.getNodeByIdAsync(pageId);
+  if (!node || node.type !== "PAGE") {
+    throw new Error(`Page not found: ${pageId}`);
+  }
+  return node;
+};
+
+const serializePage = (page: PageNode) => ({
+  id: page.id,
+  name: page.name,
+  isCurrent: page.id === figma.currentPage.id,
+});
 
 let cachedFallbackFileKey: string | null = null;
 
@@ -368,6 +460,12 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "apply_manual_keyframe_track",
   "remove_manual_keyframe_track",
   "set_timeline_duration",
+  "create_page",
+  "duplicate_page",
+  "rename_page",
+  "delete_page",
+  "set_current_page",
+  "import_node_data",
 ]);
 
 const requireEditorMode = (toolName: RequestType): void => {
@@ -1812,6 +1910,246 @@ const handleRequest = async (
           data: { 
             nodeId: node.id,
             timelines: node.timelines,
+          },
+        };
+      }
+      case "execute_code": {
+        const code = request.params?.code;
+        if (typeof code !== "string" || !code.trim()) {
+          throw new Error("code is required for execute_code");
+        }
+        const rawTimeout = Number(request.params?.timeoutMs);
+        const timeoutMs = Math.min(
+          Math.max(Number.isFinite(rawTimeout) ? rawTimeout : 5000, 100),
+          60_000
+        );
+
+        const logs: ConsoleEntry[] = [];
+        activeConsoleCapture = logs;
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        try {
+          // The plugin sandbox restricts AsyncFunction but allows indirect
+          // eval; the async IIFE gives user code top-level await + return.
+          const evaluated = (0, eval)(`(async () => {\n${code}\n})()`);
+          const timeout = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `execute_code timed out after ${timeoutMs}ms. The code may still be running — it cannot be cancelled.`
+                  )
+                ),
+              timeoutMs
+            );
+          });
+          const value = await Promise.race([
+            Promise.resolve(evaluated),
+            timeout,
+          ]);
+          const { result, truncated } = toJsonSafeResult(value);
+          return {
+            type: request.type,
+            requestId: request.requestId,
+            data: { result, truncated, logs },
+          };
+        } catch (error) {
+          return {
+            type: request.type,
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error),
+            data: { logs },
+          };
+        } finally {
+          if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+          activeConsoleCapture = null;
+        }
+      }
+      case "get_pages": {
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: figma.root.children.map(serializePage),
+        };
+      }
+      case "create_page": {
+        const page = figma.createPage();
+        const name = request.params?.name;
+        if (typeof name === "string" && name.trim()) {
+          page.name = name;
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: serializePage(page),
+        };
+      }
+      case "duplicate_page": {
+        const pageId = request.params?.pageId;
+        if (typeof pageId !== "string") {
+          throw new Error("pageId is required for duplicate_page");
+        }
+        const page = await getPageById(pageId);
+        await page.loadAsync();
+        const clone = page.clone();
+        const name = request.params?.name;
+        clone.name =
+          typeof name === "string" && name.trim()
+            ? name
+            : `${page.name} (Copy)`;
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { sourcePageId: page.id, ...serializePage(clone) },
+        };
+      }
+      case "rename_page": {
+        const pageId = request.params?.pageId;
+        const name = request.params?.name;
+        if (typeof pageId !== "string" || typeof name !== "string" || !name.trim()) {
+          throw new Error("pageId and name are required for rename_page");
+        }
+        const page = await getPageById(pageId);
+        const previousName = page.name;
+        page.name = name;
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { ...serializePage(page), previousName },
+        };
+      }
+      case "delete_page": {
+        if (request.params?.confirm !== true) {
+          throw new Error("delete_page requires confirm: true");
+        }
+        const pageId = request.params?.pageId;
+        if (typeof pageId !== "string") {
+          throw new Error("pageId is required for delete_page");
+        }
+        if (figma.root.children.length <= 1) {
+          throw new Error("Cannot delete the last remaining page");
+        }
+        const page = await getPageById(pageId);
+        if (page.id === figma.currentPage.id) {
+          const fallback = figma.root.children.find((p) => p.id !== page.id);
+          if (fallback) {
+            await figma.setCurrentPageAsync(fallback);
+          }
+        }
+        const deleted = { id: page.id, name: page.name };
+        page.remove();
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { deleted },
+        };
+      }
+      case "set_current_page": {
+        const pageId = request.params?.pageId;
+        if (typeof pageId !== "string") {
+          throw new Error("pageId is required for set_current_page");
+        }
+        const page = await getPageById(pageId);
+        await figma.setCurrentPageAsync(page);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: serializePage(page),
+        };
+      }
+      case "save_version": {
+        const title = request.params?.title;
+        if (typeof title !== "string" || !title.trim()) {
+          throw new Error("title is required for save_version");
+        }
+        const description = request.params?.description;
+        const version = await figma.saveVersionHistoryAsync(
+          title,
+          typeof description === "string" ? description : undefined
+        );
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { versionId: version.id, title },
+        };
+      }
+      case "export_node_data": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for export_node_data");
+        }
+        const node = await getSceneNodeById(nodeId);
+        const images: Record<string, string> = {};
+        const warnings: string[] = [];
+        const payload: TransferPayload = {
+          node: await exportNodeData(node, images, warnings),
+          images,
+          warnings,
+        };
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: payload,
+        };
+      }
+      case "import_node_data": {
+        const payload = request.params?.payload as TransferPayload | undefined;
+        if (!payload || !payload.node) {
+          throw new Error("payload is required for import_node_data");
+        }
+        const mode = request.params?.mode === "append" ? "append" : "replace";
+        const replaceNodeId = request.params?.replaceNodeId;
+        const warnings = [...(payload.warnings ?? [])];
+        const hashMap = importImages(payload.images ?? {});
+
+        let parent: BaseNode & ChildrenMixin = figma.currentPage;
+        let insertIndex: number | null = null;
+        let position: { x: number; y: number } | null = null;
+        let replaced = false;
+
+        if (mode === "replace" && typeof replaceNodeId === "string") {
+          const existing = await figma.getNodeByIdAsync(replaceNodeId);
+          if (existing && isSceneNode(existing) && existing.parent) {
+            const existingParent = existing.parent;
+            if (supportsChildren(existingParent)) {
+              parent = existingParent;
+              insertIndex = existingParent.children.indexOf(existing);
+              position = { x: existing.x, y: existing.y };
+              existing.remove();
+              replaced = true;
+            }
+          }
+          if (!replaced) {
+            warnings.push(
+              `Node ${replaceNodeId} not found in this file — imported as a new node on the current page instead`
+            );
+          }
+        }
+
+        const created = await importNodeData(
+          payload.node as TransferNode,
+          parent,
+          hashMap,
+          warnings
+        );
+        if (insertIndex !== null && insertIndex >= 0) {
+          try {
+            parent.insertChild(insertIndex, created);
+          } catch {
+            // keep appended position if the parent rejects reordering
+          }
+        }
+        if (position && "x" in created) {
+          created.x = position.x;
+          created.y = position.y;
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: created.id,
+            nodeName: created.name,
+            replaced,
+            warnings,
           },
         };
       }

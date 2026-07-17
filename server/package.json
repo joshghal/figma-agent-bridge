@@ -1,10 +1,10 @@
 {
-  "name": "@gethopp/figma-mcp-bridge",
-  "version": "0.1.1",
-  "description": "MCP server that bridges Figma plugin data to AI tools without hitting API rate limits",
+  "name": "figma-agent-bridge",
+  "version": "0.2.0",
+  "description": "Self-owned Figma bridge for AI agents: plugin-based read/write, execute_code, page tools, cross-file sync, and Playwright-driven file ops (create/duplicate/list). Fork of @gethopp/figma-mcp-bridge.",
   "type": "module",
   "bin": {
-    "figma-mcp-bridge": "dist/index.js"
+    "figma-agent-bridge": "dist/index.js"
   },
   "main": "dist/index.js",
   "files": [
@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "figma",
@@ -23,16 +23,17 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gethopp/figma-mcp-bridge.git",
+    "url": "git+https://github.com/joshghal/figma-agent-bridge.git",
     "directory": "server"
   },
-  "homepage": "https://github.com/gethopp/figma-mcp-bridge#readme",
+  "homepage": "https://github.com/joshghal/figma-agent-bridge#readme",
   "bugs": {
-    "url": "https://github.com/gethopp/figma-mcp-bridge/issues"
+    "url": "https://github.com/joshghal/figma-agent-bridge/issues"
   },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "playwright": "^1.61.1",
     "ws": "^8.18.0",
     "zod": "^3.24.0"
   },

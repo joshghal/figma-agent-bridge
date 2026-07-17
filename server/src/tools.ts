@@ -3,7 +3,7 @@ import { lookup } from "node:dns/promises";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
-import type { z } from "zod";
+import { z } from "zod";
 import type { Node } from "./node.js";
 import {
   createFrameInput,
@@ -635,6 +635,238 @@ export function registerTools(
         );
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "execute_code",
+    "Execute arbitrary JavaScript inside the Figma plugin sandbox with full Plugin API access (the `figma` global). Runs in an async IIFE — use top-level await and `return` a JSON-serializable value. Covers everything without a dedicated tool: components/variants, variables, styles, vectors, boolean ops. console.* output is captured and returned as logs. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.execute_code.shape,
+    async ({ code, timeoutMs, fileKey }): Promise<ToolResult> => {
+      try {
+        const resp = await node.sendWithParams(
+          "execute_code",
+          undefined,
+          { code, timeoutMs },
+          fileKey
+        );
+        if (resp.error) {
+          // Keep captured logs visible on failure — they usually explain it.
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ error: resp.error, ...(typeof resp.data === "object" ? resp.data : {}) }),
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(resp.data) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_pages",
+    "List all pages in the document with their IDs and names, and which one is current. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.get_pages.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_pages", undefined, fileKey));
+    }
+  );
+
+  server.tool(
+    "create_page",
+    "Create a new page in the document. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.create_page.shape,
+    async ({ name, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("create_page", undefined, { name }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "duplicate_page",
+    "Clone an entire page with all its content (prototype connections preserved). Useful as a scratch copy for draft-and-review workflows: clone, edit the clone, then move approved nodes back. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.duplicate_page.shape,
+    async ({ pageId, name, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("duplicate_page", undefined, { pageId, name }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "rename_page",
+    "Rename a page. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.rename_page.shape,
+    async ({ pageId, name, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("rename_page", undefined, { pageId, name }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "delete_page",
+    "Delete a page and all its content. Destructive — requires confirm: true. The last remaining page cannot be deleted. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.delete_page.shape,
+    async ({ pageId, confirm, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("delete_page", undefined, { pageId, confirm }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_current_page",
+    "Switch the editor to a different page (loads it first). When multiple files are connected, specify fileKey.",
+    toolInputSchemas.set_current_page.shape,
+    async ({ pageId, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_current_page", undefined, { pageId }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "save_version",
+    "Save a named version checkpoint to the file's version history (figma.saveVersionHistoryAsync). Call before destructive batches so changes can be rolled back from Figma's version history. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.save_version.shape,
+    async ({ title, description, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("save_version", undefined, { title, description }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "sync_nodes",
+    "Copy node subtrees from one connected Figma file into another (both files must have the bridge plugin running — see list_files). Works in either direction: original→duplicate to update a copy, or duplicate→original to merge changes back. mode 'replace' (default) swaps the node with the same ID in the target (duplicated files preserve node IDs); 'append' adds to the target's current page. FRAME/TEXT/RECTANGLE/ELLIPSE/LINE/GROUP are rebuilt editable; other node types (vectors, instances, components) arrive as SVG snapshots. Rebuilt nodes get new IDs. A version checkpoint is saved on the target first unless savepoint is false.",
+    {
+      sourceFileKey: z
+        .string()
+        .describe("fileKey of the connected file to read nodes from"),
+      targetFileKey: z
+        .string()
+        .describe("fileKey of the connected file to write nodes into"),
+      nodeIds: z
+        .array(z.string())
+        .min(1)
+        .describe("Node IDs in the source file to transfer"),
+      mode: z
+        .enum(["replace", "append"])
+        .optional()
+        .describe(
+          "replace (default): swap the same-ID node in the target; append: add to the target's current page"
+        ),
+      savepoint: z
+        .boolean()
+        .optional()
+        .describe(
+          "Save a version checkpoint on the target before syncing (default true)"
+        ),
+    },
+    async ({
+      sourceFileKey,
+      targetFileKey,
+      nodeIds,
+      mode,
+      savepoint,
+    }): Promise<ToolResult> => {
+      try {
+        if (sourceFileKey === targetFileKey) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "sourceFileKey and targetFileKey must differ. For same-file workflows use duplicate_page / duplicate_nodes instead.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const warnings: string[] = [];
+        if (savepoint !== false) {
+          const checkpoint = await node.sendWithParams(
+            "save_version",
+            undefined,
+            { title: `Before sync_nodes from ${sourceFileKey}` },
+            targetFileKey
+          );
+          if (checkpoint.error) {
+            warnings.push(
+              `Version checkpoint failed (continuing): ${checkpoint.error}`
+            );
+          }
+        }
+
+        const results: Array<Record<string, unknown>> = [];
+        for (const nodeId of nodeIds) {
+          const exported = await node.send(
+            "export_node_data",
+            [nodeId],
+            sourceFileKey
+          );
+          if (exported.error) {
+            results.push({ nodeId, success: false, stage: "export", error: exported.error });
+            continue;
+          }
+          const imported = await node.sendWithParams(
+            "import_node_data",
+            undefined,
+            { payload: exported.data, mode: mode ?? "replace", replaceNodeId: nodeId },
+            targetFileKey
+          );
+          if (imported.error) {
+            results.push({ nodeId, success: false, stage: "import", error: imported.error });
+            continue;
+          }
+          results.push({ nodeId, success: true, ...(imported.data as Record<string, unknown>) });
+        }
+
+        const succeeded = results.filter((r) => r.success).length;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                total: results.length,
+                succeeded,
+                failed: results.length - succeeded,
+                warnings,
+                results,
+              }),
+            },
+          ],
+          isError: succeeded === 0,
         };
       } catch (err) {
         return {

@@ -5,6 +5,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Node } from "./node.js";
 import { Election } from "./election.js";
 import { registerTools } from "./tools.js";
+import { registerBrowserTools } from "./browser/tools.js";
+import { closeBrowser } from "./browser/session.js";
 import { VERSION } from "./version.js";
 
 const PORT = 1994;
@@ -24,7 +26,9 @@ async function main(): Promise<void> {
     console.error("Shutting down...");
     election.stop();
     node.stop();
-    process.exit(0);
+    // Give the bridge browser a moment to close cleanly, then exit either way.
+    void closeBrowser().finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3_000);
   };
 
   process.on("SIGINT", shutdown);
@@ -42,6 +46,7 @@ async function main(): Promise<void> {
   });
 
   registerTools(server, node, PORT);
+  registerBrowserTools(server);
 
   console.error(`Starting MCP server (role: ${node.roleName})`);
 

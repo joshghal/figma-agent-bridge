@@ -820,6 +820,72 @@ export const toolInputSchemas = {
     duration: z.number().positive().describe("The new timeline duration in seconds (must be greater than zero)"),
     fileKey: fileKeyField,
   }),
+
+  execute_code: z.object({
+    code: z
+      .string()
+      .min(1)
+      .describe(
+        "JavaScript executed inside the Figma plugin sandbox with full Plugin API access via the `figma` global. Runs in an async IIFE: top-level await works, and a `return` statement returns a JSON-serializable value. console.* output is captured and returned as logs."
+      ),
+    timeoutMs: z
+      .number()
+      .optional()
+      .describe(
+        "Execution timeout in milliseconds (default 5000, max 60000). On timeout the bridge stops waiting but the code cannot be cancelled."
+      ),
+    fileKey: fileKeyField,
+  }),
+
+  get_pages: z.object({
+    fileKey: fileKeyField,
+  }),
+
+  create_page: z.object({
+    name: z.string().optional().describe("Name for the new page"),
+    fileKey: fileKeyField,
+  }),
+
+  duplicate_page: z.object({
+    pageId: createFigmaNodeIdSchema().describe(
+      "The ID of the page to duplicate (from get_pages)"
+    ),
+    name: z
+      .string()
+      .optional()
+      .describe("Name for the cloned page (defaults to '<source> (Copy)')"),
+    fileKey: fileKeyField,
+  }),
+
+  rename_page: z.object({
+    pageId: createFigmaNodeIdSchema().describe("The ID of the page to rename"),
+    name: z.string().min(1).describe("The new page name"),
+    fileKey: fileKeyField,
+  }),
+
+  delete_page: z.object({
+    pageId: createFigmaNodeIdSchema().describe("The ID of the page to delete"),
+    confirm: z
+      .boolean()
+      .describe("Must be true to confirm the destructive deletion"),
+    fileKey: fileKeyField,
+  }),
+
+  set_current_page: z.object({
+    pageId: createFigmaNodeIdSchema().describe(
+      "The ID of the page to switch to"
+    ),
+    fileKey: fileKeyField,
+  }),
+
+  save_version: z.object({
+    title: z.string().min(1).describe("Title for the version checkpoint"),
+    description: z
+      .string()
+      .optional()
+      .describe("Optional description for the version checkpoint"),
+    fileKey: fileKeyField,
+  }),
 } as const;
 
 type ToolName = keyof typeof toolInputSchemas;
@@ -878,6 +944,14 @@ const rpcToArgs: Record<
   apply_manual_keyframe_track: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
   remove_manual_keyframe_track: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
   set_timeline_duration: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  execute_code: (_nodeIds, params) => ({ ...params }),
+  get_pages: (_nodeIds, params) => ({ ...params }),
+  create_page: (_nodeIds, params) => ({ ...params }),
+  duplicate_page: (_nodeIds, params) => ({ ...params }),
+  rename_page: (_nodeIds, params) => ({ ...params }),
+  delete_page: (_nodeIds, params) => ({ ...params }),
+  set_current_page: (_nodeIds, params) => ({ ...params }),
+  save_version: (_nodeIds, params) => ({ ...params }),
 };
 
 /**
