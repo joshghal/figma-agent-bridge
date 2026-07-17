@@ -71,6 +71,43 @@ async function waitForFileUrl(
   return match[1];
 }
 
+const TILE_SELECTOR = '[role="listitem"] [role="group"][aria-label]';
+const MENU_ITEM_SELECTOR = ".multilevel_dropdown--name--uJ5IP";
+
+/** Opens the Recents file browser and waits for tiles to render. */
+async function openFileBrowser(page: Page): Promise<void> {
+  // Both /files/recents and /files/drafts redirect to the team recents view.
+  await page.goto("https://www.figma.com/files/recents", {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForTimeout(3_000);
+  assertLoggedIn(page);
+  await page.waitForSelector(TILE_SELECTOR, { timeout: 15_000 }).catch(() => {});
+}
+
+/** Clicks a right-click context-menu item by its exact visible text. */
+async function clickMenuItem(page: Page, text: string): Promise<void> {
+  await page
+    .locator(MENU_ITEM_SELECTOR, { hasText: new RegExp(`^${text}$`) })
+    .first()
+    .click({ timeout: 5_000 });
+}
+
+/**
+ * Reads a file tile's key via the sanctioned UI path: right-click → Copy link →
+ * read the clipboard. Figma does not expose file keys in the DOM otherwise.
+ */
+async function keyViaCopyLink(page: Page, tile: import("playwright").Locator): Promise<string | null> {
+  await tile.scrollIntoViewIfNeeded().catch(() => {});
+  await tile.click({ button: "right" });
+  await page.waitForTimeout(500);
+  await clickMenuItem(page, "Copy link");
+  await page.waitForTimeout(400);
+  const clip = await page.evaluate(() => navigator.clipboard.readText()).catch(() => "");
+  const m = clip.match(FILE_URL_RE);
+  return m ? m[1] : null;
+}
+
 /** Best-effort rename of the file open in the editor tab. */
 async function tryRenameOpenFile(page: Page, name: string): Promise<boolean> {
   try {
@@ -211,54 +248,109 @@ export function registerBrowserTools(server: McpServer): void {
 
   server.tool(
     "list_account_files",
-    "List Figma files by NAME from your account's file browser (Recents), by reading figma.com/files in the bridge browser. IMPORTANT: Figma no longer exposes file keys in the file-browser DOM, so this returns file names only — not fileKeys/URLs. To act on a file (duplicate_file, plugin tools), open it once and use its URL. Requires a logged-in browser session (figma_login).",
+    "List Figma files from your account's Recents browser, with real fileKeys. Figma does not expose keys in the DOM, so each file's key is read via the sanctioned right-click → Copy link → clipboard flow (one interaction per file, so this is slower than a plain scrape — keep the limit modest). Requires a logged-in browser session (figma_login).",
     {
       limit: z
         .number()
         .optional()
-        .describe("Maximum number of files to return (default 50)"),
+        .describe("Maximum number of files to return (default 20). Each file costs one right-click+copy, so higher limits are slower."),
     },
     async ({ limit }): Promise<ToolResult> => {
       try {
         return await withPage(async (page) => {
-          // Both /files/recents and /files/drafts redirect to the team
-          // recents-and-sharing view; navigate and scrape whatever renders.
-          await page.goto("https://www.figma.com/files/recents", {
-            waitUntil: "domcontentloaded",
-          });
-          await page.waitForTimeout(3_000);
-          assertLoggedIn(page);
+          await openFileBrowser(page);
+          for (let i = 0; i < 3; i++) {
+            await page.mouse.wheel(0, 2_500);
+            await page.waitForTimeout(400);
+          }
+          const tiles = page.locator(TILE_SELECTOR);
+          const total = await tiles.count();
+          const max = Math.min(total, limit ?? 20);
+          const files: Array<{ name: string; fileKey: string | null; fileUrl: string | null }> = [];
+          const seenKeys = new Set<string>();
+          for (let i = 0; i < max; i++) {
+            const tile = tiles.nth(i);
+            const name = (await tile.getAttribute("aria-label")) || "(unnamed)";
+            let key: string | null = null;
+            try {
+              key = await keyViaCopyLink(page, tile);
+            } catch {
+              await page.keyboard.press("Escape").catch(() => {});
+            }
+            if (key && seenKeys.has(key)) continue;
+            if (key) seenKeys.add(key);
+            files.push({
+              name,
+              fileKey: key,
+              fileUrl: key ? `https://www.figma.com/design/${key}/` : null,
+            });
+          }
+          return ok({ count: files.length, totalTiles: total, files });
+        });
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
 
-          // File tiles are role="group" divs whose aria-label is the file name
-          // (no key anywhere in the DOM). Wait for at least one, then scroll.
-          const tileSelector = '[role="listitem"] [role="group"][aria-label]';
-          await page
-            .waitForSelector(tileSelector, { timeout: 15_000 })
-            .catch(() => {});
+  server.tool(
+    "delete_file",
+    "Move a Figma file to trash (recoverable from Figma's trash for 30 days). Identifies the target by fileKey via the right-click → Copy link flow, so it deletes exactly the file you name and never a same-named one. Destructive — requires confirm: true. Requires a logged-in browser session (figma_login).",
+    {
+      file: z.string().describe("The file to trash: a full figma.com URL or a bare file key"),
+      confirm: z.boolean().describe("Must be true to confirm moving the file to trash"),
+    },
+    async ({ file, confirm }): Promise<ToolResult> => {
+      try {
+        if (confirm !== true) {
+          return fail(new FigmaBrowserError("delete_file requires confirm: true", "CONFIRM_REQUIRED"));
+        }
+        const targetKey = parseFileKey(file);
+        return await withPage(async (page) => {
+          await openFileBrowser(page);
           for (let i = 0; i < 4; i++) {
             await page.mouse.wheel(0, 2_500);
+            await page.waitForTimeout(400);
+          }
+          const tiles = page.locator(TILE_SELECTOR);
+          const total = await tiles.count();
+          for (let i = 0; i < total; i++) {
+            const tile = tiles.nth(i);
+            const name = (await tile.getAttribute("aria-label")) || "";
+            let key: string | null = null;
+            try {
+              key = await keyViaCopyLink(page, tile);
+            } catch {
+              await page.keyboard.press("Escape").catch(() => {});
+              continue;
+            }
+            if (key !== targetKey) continue;
+            // Found it — re-open the menu and move to trash.
+            await tile.click({ button: "right" });
             await page.waitForTimeout(500);
+            await clickMenuItem(page, "Move to trash");
+            // "Move to trash" opens a confirmation modal that must be confirmed.
+            const confirmBtn = page.locator(
+              '[data-testid="confirmation-modal-confirm-action-button"]'
+            );
+            await confirmBtn.click({ timeout: 5_000 });
+            await confirmBtn
+              .waitFor({ state: "detached", timeout: 5_000 })
+              .catch(() => {});
+            await page.waitForTimeout(500);
+            return ok({
+              deleted: true,
+              fileKey: targetKey,
+              name,
+              note: "Moved to trash (recoverable from Figma trash for 30 days).",
+            });
           }
-
-          const names = await page.$$eval(tileSelector, (tiles) =>
-            tiles
-              .map((t) => t.getAttribute("aria-label") || "")
-              .filter((n) => n.trim().length > 0)
+          return fail(
+            new FigmaBrowserError(
+              `File ${targetKey} not found in the Recents browser (only recent files are scannable). Open it once so it appears in Recents, then retry.`,
+              "FILE_NOT_FOUND"
+            )
           );
-
-          const seen = new Set<string>();
-          const files: Array<{ name: string; fileKey: null; fileUrl: null }> = [];
-          for (const name of names) {
-            if (seen.has(name)) continue;
-            seen.add(name);
-            files.push({ name, fileKey: null, fileUrl: null });
-            if (files.length >= (limit ?? 50)) break;
-          }
-          return ok({
-            count: files.length,
-            files,
-            note: "Names only — Figma does not expose file keys in the file-browser DOM. Open a file to get its URL/key for duplicate_file or plugin tools.",
-          });
         });
       } catch (err) {
         return fail(err);

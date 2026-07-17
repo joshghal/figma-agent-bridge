@@ -184,10 +184,12 @@ These drive a logged-in Chrome window (it opens briefly — that's normal):
 create_file {name:"Spike: new onboarding"}   → {fileKey, fileUrl}
 duplicate_file {file:"https://www.figma.com/design/KEY/Name"}
                                              → copy in your Drafts, new fileKey
-list_account_files {limit:50}                → [{name, fileKey:null, fileUrl:null}]
+list_account_files {limit:20}                → [{name, fileKey, fileUrl}]
+delete_file {file:"<url or key>", confirm:true}  → moves to trash (recoverable)
 ```
 
-- `list_account_files` returns file **names only**. Figma no longer puts file keys in the file-browser DOM (tiles are `role="group"` divs whose `aria-label` is the name, with no key anywhere), so it can't return keys/URLs — open a file to get its URL for `duplicate_file` or the plugin.
+- `list_account_files` returns real fileKeys. Figma doesn't put keys in the file-browser DOM (tiles are `role="group"` divs with only the name in `aria-label`), so the bridge reads each key via the right-click → **Copy link** → clipboard flow — one interaction per file, so it's slower than a plain scrape; keep `limit` modest.
+- `delete_file` finds the target by fileKey (again via Copy link) before trashing, so it deletes exactly the file you name, never a same-named one. It confirms Figma's "Move file to trash" modal for you. Files are recoverable from Figma's trash for 30 days.
 - `duplicate_file` accepts a URL or bare key, works on any file you can *view* (a view-only source lands the copy in **your Drafts** — where dev plugins can run, since Drafts copies give you edit rights).
 - **The unremovable manual step:** a new/duplicated file must be opened in the desktop app and the plugin run there before plugin tools can touch it. Tool responses remind you.
 - `LOGIN_REQUIRED` error → run `figma_login`, retry.

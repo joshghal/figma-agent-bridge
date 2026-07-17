@@ -26,6 +26,8 @@ async function launchContext(): Promise<BrowserContext> {
   const options = {
     headless: false,
     viewport: { width: 1440, height: 900 },
+    // Needed for the "Copy link" file-browser flow that reads the file key.
+    permissions: ["clipboard-read", "clipboard-write"],
   };
   try {
     // Prefer the system Chrome so no browser download is needed.
