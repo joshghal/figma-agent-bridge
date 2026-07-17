@@ -1,38 +1,115 @@
-# Figma Agent Bridge — Setup & Tutorial Guide
+# Figma Agent Bridge — Complete Guide
 
-Everything to get from a fresh machine to the full duplicate → edit → sync-back loop. For the capability overview see [README.md](README.md).
+A self-owned bridge that lets an AI agent (Claude Code) **read Figma designs and generate code** from them, on a **free Figma plan**, with **no official Figma MCP** and **no paid account**. Built for the "follow a designer's file → slice it to code" workflow.
+
+This guide is self-contained: follow it top to bottom on a fresh machine/account and you'll have a working setup.
 
 ---
 
-## 1. Prerequisites
+## Table of contents
 
-| Requirement | Why | Check |
+1. [What this is & why](#1-what-this-is--why)
+2. [How it works](#2-how-it-works)
+3. [Prerequisites](#3-prerequisites)
+4. [Install](#4-install)
+5. [Claude Code setup (MCP)](#5-claude-code-setup-mcp)
+6. [Figma setup (plugin + login)](#6-figma-setup-plugin--login)
+7. [Verify everything (doctor)](#7-verify-everything-doctor)
+8. [Daily usage — follow & slice](#8-daily-usage--follow--slice)
+9. [The access model (read-only)](#9-the-access-model-read-only)
+10. [Tool reference](#10-tool-reference)
+11. [setup.sh reference](#11-setupsh-reference)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Updating & maintenance](#13-updating--maintenance)
+14. [Credits & license](#14-credits--license)
+
+---
+
+## 1. What this is & why
+
+**The problem.** On a free Figma plan, the REST API is capped at ~6 calls/month, so REST-based MCP servers (the official Figma MCP, Framelink) are unusable for real work. And Figma's Plugin API can't create, duplicate, or list *files* (it's sandboxed to one open file). So there's no off-the-shelf way to read a designer's evolving file and turn it into code for free.
+
+**The solution.** Two mechanisms in one MCP server:
+- A **Figma plugin** connected over a local WebSocket gives full read/write **inside a file you can edit** — no REST, no rate limit, free on any plan.
+- An **embedded browser** (Playwright) drives figma.com for the file-level things Figma only exposes in its UI: create, duplicate, list, delete, and "pull latest."
+
+**The core use case.** A designer shares a file with you (read-only). You duplicate it (view access is enough → the copy lands in your Drafts where you own it), run the bridge plugin on the copy, and the agent reads it to generate code. When the designer updates the file, you pull a fresh copy. One command: `pull_latest`.
+
+---
+
+## 2. How it works
+
+```
+Claude Code (agent)
+      │  MCP (stdio)
+      ▼
+MCP server  (node server/dist/index.js)
+      ├─ WebSocket :1994  ⇄  Figma plugin  (runs inside the open file, desktop app)
+      │        └─ registry keyed by figma.fileKey (multiple files at once)
+      └─ Playwright  ⇄  figma.com  (persistent Chrome profile, logged in once)
+               └─ create / duplicate / list / delete / pull_latest
+```
+
+- **Plugin tools** (read design, edit, execute_code, pages, sync) go over the WebSocket to the plugin. The plugin must be running in the target file.
+- **File-op tools** (create/duplicate/list/delete/pull_latest/figma_login) drive the browser. They need a logged-in session, not the plugin.
+- The MCP server is a **long-running process**: it loads once and does **not** hot-reload when you rebuild. Rebuild → reconnect/restart to pick up changes (see [Troubleshooting](#12-troubleshooting)).
+
+---
+
+## 3. Prerequisites
+
+| Need | Why | Check |
 |---|---|---|
-| **Figma desktop app** (Mac/Windows) | Dev plugins can only be imported in the desktop app | `figma.com/downloads` |
-| **Node.js ≥ 20** | Runs the MCP server | `node --version` |
-| **Google Chrome** (or run `npx playwright install chromium` once) | Browser file ops (create/duplicate/list) | installed at `/Applications/Google Chrome.app` |
-| A Figma account | Free (Starter) plan is fully supported — that's the point | — |
+| **Figma desktop app** (Mac/Windows) | Dev plugins can only be imported in the desktop app | figma.com/downloads |
+| **Node.js ≥ 20** | Runs the MCP server | `node -v` |
+| **git** | Clone the repo | `git --version` |
+| **Google Chrome** *(or run `npx playwright install chromium` once)* | Browser file ops | — |
+| **Claude Code** | The agent that talks to the bridge | `claude --version` |
+| A **Figma account** | Free (Starter) plan is fully supported | — |
 
 ---
 
-## 2. One-time setup (~5 minutes)
+## 4. Install
 
-### 2.1 Clone and build
+### Option A — one command (recommended)
 
 ```bash
 git clone https://github.com/joshghal/figma-agent-bridge.git
 cd figma-agent-bridge
+./setup.sh
+```
 
-cd server && npm install && npm run build
+`setup.sh` checks prerequisites, builds the server + plugin, sorts out the browser, prints the MCP config, then runs health/registration/login checks and lists the manual steps. See [setup.sh reference](#11-setupsh-reference).
+
+To also write the MCP entry into a project automatically:
+```bash
+./setup.sh /path/to/your/project     # merges figma-bridge into that project's .mcp.json
+```
+
+### Option B — manual
+
+```bash
+git clone https://github.com/joshghal/figma-agent-bridge.git
+cd figma-agent-bridge/server && npm install && npm run build
 cd ../plugin && npm install && npm run build
 ```
 
-Rebuild whenever you pull changes (`npm run build` in whichever half changed — `server/` or `plugin/`).
+Rebuild after pulling changes (`npm run build` in whichever of `server/` or `plugin/` changed).
 
-### 2.2 Register the MCP server
+---
 
-Add to your project's `.mcp.json` (or Claude Desktop / Cursor MCP config), with the **absolute** path to your clone:
+## 5. Claude Code setup (MCP)
 
+Register the server with Claude Code. Pick one:
+
+**CLI (recommended):**
+```bash
+claude mcp add figma-bridge -- node /ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js
+# add --scope user to make it available in every project:
+claude mcp add figma-bridge --scope user -- node /ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js
+```
+
+**Or edit `.mcp.json`** in your project:
 ```json
 {
   "mcpServers": {
@@ -45,233 +122,169 @@ Add to your project's `.mcp.json` (or Claude Desktop / Cursor MCP config), with 
 }
 ```
 
-Restart your MCP client (or reconnect via `/mcp` in Claude Code). You should see ~50 `figma-bridge` tools.
+Then **start (or restart) Claude Code** so it spawns the server. Confirm with `/mcp` — `figma-bridge` should be connected.
 
-> Multiple IDE windows are fine — the first server instance binds port `1994` and becomes **leader**; the rest become **followers** and proxy through it automatically.
+> **Important:** whenever you rebuild the server, a *running* Claude Code session keeps the old process. Load the new build with `/mcp reconnect`, or quit and reopen Claude Code. A session never hot-reloads a rebuilt MCP server.
 
-### 2.3 Import the plugin into Figma (once per machine)
+---
 
-1. Open **any design file** in the Figma **desktop app**.
+## 6. Figma setup (plugin + login)
+
+### 6a. Import the plugin (once per machine)
+
+1. Open the Figma **desktop app** and open any design file.
 2. Menu → **Plugins → Development → Import plugin from manifest…**
-3. Select `<clone>/plugin/manifest.json`.
-4. The plugin now appears as **Figma Agent Bridge** under Plugins → Development, permanently.
+3. Select `figma-agent-bridge/plugin/manifest.json`.
+4. It now appears permanently under **Plugins → Development → Figma Agent Bridge**.
 
-Teammates repeat 2.1 + 2.3 on their own machines (each also registers the server in their own MCP client).
+### 6b. Log the browser in (once)
 
-### 2.4 Log the browser in (once, only needed for file ops)
-
-Ask your agent to call `figma_login`, or trigger it yourself from the MCP client. A Chrome window opens on the Figma login page — complete the login (SSO/2FA fine). The session persists in `~/.figma-agent-bridge/browser-profile`, so this is one-time until the session expires (then any file-op tool returns `LOGIN_REQUIRED` and you just run `figma_login` again).
+Ask your agent to run **`figma_login`**. A Chrome window opens on the Figma login page — sign in **there** (the bridge never sees your password). Use the account that has view access to the designer's files. The session persists in `~/.figma-agent-bridge/browser-profile`, so this is one-time until it expires.
 
 ---
 
-## 3. Daily workflow
+## 7. Verify everything (doctor)
 
-**Connect a file** (every Figma session — plugins cannot auto-start, this is Figma policy):
+```bash
+./setup.sh --check
+```
 
-1. Open the file in the Figma desktop app.
-2. Right-click canvas → **Plugins → Development → Figma Agent Bridge** (or ⌥⌘P to re-run the last plugin).
-3. Keep the panel open — green "WebSocket Connected" = live. Closing the panel or the file disconnects it.
+This runs diagnostics only (no rebuild) and reports:
 
-**Verify from the agent:** `list_files` → returns `[{fileKey, fileName}]`. Empty array = plugin not running.
+- **Health check** — boots the server and confirms all tools (incl. `pull_latest`) are exposed. Catches a **stale build**.
+- **MCP registration** — whether `figma-bridge` is configured in Claude Code (prints the `claude mcp add` fix if not).
+- **Browser login** — whether a Figma session is saved (prints "run figma_login" if not).
+- **Reconnect reminder** — a running session won't hot-reload a rebuilt server.
 
-**Target a file:** with one file connected, tools just work. With several connected, pass `fileKey` (from `list_files`) to any tool.
+All green = ready. Any ✗ prints the exact fix.
 
 ---
 
-## 4. Tutorials
+## 8. Daily usage — follow & slice
 
-### T1 — First contact: read a design
+The whole workflow, in your words to the agent:
 
-```
-list_files                        → note the fileKey
-get_pages                         → page IDs + names
-get_document                      → current page tree
-get_screenshot {nodeIds:["1:23"]} → PNG of a node
-get_variable_defs                 → design tokens
-```
+> **"pull the latest `<designer file URL>` and slice the `<screen>` to React Native"**
 
-Tip for big files: `get_design_context {depth: 2}` gives a truncated tree with `childCount` stubs — much cheaper than `get_document`.
+What happens:
 
-### T2 — Implement a design change
+1. **Agent runs `pull_latest`** → makes a fresh, full-fidelity duplicate of the designer's file in your Drafts, and **auto-trashes your previous copy** of it (no clutter). It tries to open the new copy in your desktop app.
+2. **You press ⌥⌘P** in that file to run the bridge plugin (keep the panel open). *This is the one manual step — Figma blocks plugin auto-start for everyone.*
+3. **Agent reads the design** over the bridge (`get_document`, `get_node`, `get_screenshot`, `get_variable_defs`) and generates the code.
 
-Typed tools cover the common cases:
+When the designer updates the file, just say "pull the latest" again. Same one-liner, no manual duplicating, no cleanup — the old copy is trashed automatically. You always have exactly one current copy per designer file.
 
-```
-create_frame {name:"Card", width:343, height:120, fillColor:"#FFFFFF"}
-set_auto_layout {nodeId:"...", layoutMode:"VERTICAL", itemSpacing:12, padding:16}
-create_text {parentId:"...", text:"Total Gold", fontSize:14}
-set_solid_fill {nodeId:"...", color:"#F5B300"}
-get_screenshot {nodeIds:["..."]}      ← always verify visually
-```
-
-Writes are refused in Dev Mode — switch the file to the design editor.
-
-### T3 — `execute_code`: everything else
-
-`execute_code` runs your JavaScript inside the plugin sandbox with the full [`figma` Plugin API](https://developers.figma.com/docs/plugins/). It's an async IIFE: use `await`, `return` a JSON-serializable value, and `console.log` is captured into the response.
-
-**Create a component with variants:**
-```js
-const btn = figma.createComponent();
-btn.name = "State=Default";
-btn.resize(120, 40);
-const btn2 = figma.createComponent();
-btn2.name = "State=Pressed";
-btn2.resize(120, 40);
-const set = figma.combineAsVariants([btn, btn2], figma.currentPage);
-set.name = "Button";
-return { setId: set.id };
-```
-
-**Create variables and bind one to a fill (free plan = 1 mode per collection):**
-```js
-const col = figma.variables.createVariableCollection("tokens");
-const gold = figma.variables.createVariable("color/gold", col, "COLOR");
-gold.setValueForMode(col.modes[0].modeId, { r: 0.96, g: 0.70, b: 0, a: 1 });
-const node = await figma.getNodeByIdAsync("1:23");
-node.fills = [figma.variables.setBoundVariableForPaint(
-  { type: "SOLID", color: { r: 0, g: 0, b: 0 } }, "color", gold)];
-return { variableId: gold.id };
-```
-
-**Find nodes by name:**
-```js
-await figma.currentPage.loadAsync();
-const hits = figma.currentPage.findAll(n => n.name.includes("Button"));
-return hits.map(n => ({ id: n.id, name: n.name, type: n.type }));
-```
-
-Rules of thumb:
-- `timeoutMs` default 5000, max 60000. On timeout the code **keeps running** — it just stops being awaited. Keep scripts small and idempotent.
-- Text edits need `await figma.loadFontAsync(node.fontName)` first.
-- Under dynamic-page loading, use the `Async` API variants (`getNodeByIdAsync`, `page.loadAsync()`).
-
-### T4 — Safe editing: checkpoints and scratch pages
-
-Before any destructive batch:
-
-```
-save_version {title:"Before agent restyle", description:"..."}
-```
-
-That's a real entry in File → Version history — one-click rollback.
-
-Draft-and-review inside one file (highest fidelity — no cross-file loss):
-
-```
-get_pages                                   → find page "Home"
-duplicate_page {pageId:"0:1", name:"Home (agent draft)"}
-set_current_page {pageId:"<clone id>"}      → work on the clone
-...edit, screenshot, iterate...
-```
-
-Merge back by moving approved nodes with `execute_code`:
-```js
-const src = await figma.getNodeByIdAsync("<node-on-draft-page>");
-const target = figma.root.children.find(p => p.name === "Home");
-await target.loadAsync();
-target.appendChild(src);   // moves the node, keeps its ID
-return { moved: src.id };
-```
-
-Then `delete_page {pageId:"<clone id>", confirm:true}`.
-
-### T5 — File operations (create / duplicate / list)
-
-These drive a logged-in Chrome window (it opens briefly — that's normal):
-
-```
-create_file {name:"Spike: new onboarding"}   → {fileKey, fileUrl}
-duplicate_file {file:"https://www.figma.com/design/KEY/Name"}
-                                             → copy in your Drafts, new fileKey
-list_account_files {limit:20}                → [{name, fileKey, fileUrl}]
-delete_file {file:"<url or key>", confirm:true}  → moves to trash (recoverable)
-```
-
-- `list_account_files` returns real fileKeys. Figma doesn't put keys in the file-browser DOM (tiles are `role="group"` divs with only the name in `aria-label`), so the bridge reads each key via the right-click → **Copy link** → clipboard flow — one interaction per file, so it's slower than a plain scrape; keep `limit` modest.
-- `delete_file` finds the target by fileKey (again via Copy link) before trashing, so it deletes exactly the file you name, never a same-named one. It confirms Figma's "Move file to trash" modal for you. Files are recoverable from Figma's trash for 30 days.
-- `duplicate_file` accepts a URL or bare key, works on any file you can *view* (a view-only source lands the copy in **your Drafts** — where dev plugins can run, since Drafts copies give you edit rights).
-- **The unremovable manual step:** a new/duplicated file must be opened in the desktop app and the plugin run there before plugin tools can touch it. Tool responses remind you.
-- `LOGIN_REQUIRED` error → run `figma_login`, retry.
-
-### T5b — Following a designer's file you only have read-only access to
-
-This is the common case: a designer shares their file with you (view access), and you want to keep pulling their latest changes. You **cannot** run the plugin on their original (plugins need edit access), but you don't need to — you duplicate it (view access is enough) and work on your own copy.
-
-Don't do this by hand every time. Use **`pull_latest`**:
-
-```
-pull_latest {original:"https://www.figma.com/design/THEIR_KEY/..."}
-   → duplicates their file to your Drafts (full fidelity)
-   → auto-trashes your PREVIOUS snapshot of that same file (no pile-up)
-   → remembers the new snapshot per original
-```
-
-Then open the returned file in Figma desktop and press **⌥⌘P** to run the plugin. That's the whole follow-changes loop: **`pull_latest` → ⌥⌘P**.
-
-Notes:
-- Read-only access on the original is enough — everything happens on the copy you own.
-- Full fidelity: it's Figma's own server-side duplicate (keeps components/variables/prototypes), better than `sync_nodes`' rebuild.
-- Duplicating the *same unchanged* file twice returns the same copy (Figma dedupes) — harmless; `pull_latest` won't trash the copy it just returned.
-- You can never push changes back *into* the designer's original (read-only) — but following is pull-only, so that never comes up.
-
-### T6 — The full loop: duplicate → edit → sync back
-
-The flagship workflow. Example: restyle a frame on a copy of the design system, then push it back.
-
-```
-1. duplicate_file {file:"<original url>"}        → copyKey (in Drafts)
-2. [manual] open the copy in Figma desktop, run the plugin
-3. list_files                                    → both files connected
-4. ...edit the copy (typed tools / execute_code, screenshots to verify)...
-5. sync_nodes {
-     sourceFileKey: "<copyKey>",
-     targetFileKey: "<originalKey>",
-     nodeIds: ["123:456"],                       ← IDs from the copy
-     mode: "replace"
-   }
-```
-
-`sync_nodes` works in **both directions** — original→copy keeps a duplicate fresh; copy→original merges approved changes back. What it does per node:
-
-1. Saves a version checkpoint on the target (skip with `savepoint:false`).
-2. Serializes the subtree in the source (image fills travel as bytes).
-3. In the target, finds the **same node ID** (duplicates preserve IDs), captures its parent/index/position, deletes it, rebuilds in place. Missing ID → appends to the current page with a warning.
-
-Fidelity contract:
-- **Editable rebuild:** FRAME (auto-layout, fills, effects), TEXT (per-range fonts/sizes/colors), RECTANGLE, ELLIPSE, LINE, GROUP.
-- **SVG snapshot** (visually faithful, not editable): vectors, stars, polygons, boolean ops, **instances and components** (linkage is lost — free plan can't publish libraries for re-linking).
-- Rebuilt nodes get **new IDs**; existing prototype links pointing at replaced nodes break. Check `warnings` in the result.
-
-Prefer T4's same-page workflow when the change can live in one file; use `sync_nodes` when the review must happen in a separate file.
+### Reading tips for accurate slicing
+- Big file? `get_design_context {depth: 2}` gives a cheaper truncated tree than `get_document`.
+- `get_screenshot {nodeIds:[...]}` to see a frame; `get_variable_defs` for design tokens.
+- `get_pages` then work one page at a time.
 
 ---
 
-## 5. Troubleshooting
+## 9. The access model (read-only)
+
+**You only need read-only access to the designer's file.** Here's why it works and what the limits are:
+
+- **Duplicating needs only view access** — the copy lands in *your* Drafts, where you have full edit rights. So you never touch or edit the original.
+- **The plugin needs edit access** — but it runs on *your copy* (which you own), never the original. That's why you duplicate.
+- **You can never write back into the designer's original** (read-only is a hard Figma permission — no tool can bypass it). But the follow-workflow is pull-only, so this never comes up.
+
+### "duplicate once, sync forever"?
+Not literally possible with a read-only source: to read the original's latest state you must duplicate it (a read-only file can't run the plugin). `pull_latest` is the real-world version — **one command, one current full-fidelity copy, old one auto-trashed.**
+
+### When to use `sync_nodes` instead
+Only if you keep your *own* edits on the copy (dev notes, etc.) and need to preserve them across updates. Then keep one working copy and `sync_nodes` fresh content into it — but it's a **lossy rebuild** (components/vectors become flat SVGs, node IDs change), so it's the wrong choice for accurate slicing. For pure read-and-slice, always use `pull_latest`.
+
+---
+
+## 10. Tool reference
+
+### File ops (browser — need `figma_login`)
+| Tool | Does |
+|---|---|
+| `figma_login` | One-time interactive Figma login for the embedded browser. |
+| `pull_latest` | **Primary follow tool.** Fresh full-fidelity duplicate of an original + auto-trash your previous snapshot of it. Read-only access is enough. |
+| `create_file` | New blank draft via `figma.com/new`. Returns fileKey + URL. |
+| `duplicate_file` | Duplicate any viewable file via the `/duplicate` URL. Copy lands in Drafts. |
+| `list_account_files` | List your files (name + real fileKey) from the Recents browser (keys read via right-click → Copy link). |
+| `delete_file` | Move a file to trash by fileKey (recoverable 30 days). Requires `confirm: true`. |
+
+### Plugin ops (need the plugin running in the file)
+| Tool | Does |
+|---|---|
+| `list_files` | List currently *connected* files (plugin running). Empty = plugin not running. |
+| `get_document` / `get_node` / `get_selection` | Read the tree / a node / the selection. |
+| `get_design_context` | Cheaper depth-limited tree (design-to-code). |
+| `get_screenshot` / `save_screenshots` | Export PNG/SVG/JPG/PDF (inline, or batch to disk). |
+| `get_styles` / `get_variable_defs` / `get_metadata` | Styles, variables/tokens, metadata. |
+| `create_frame` / `create_text` / `create_shape` / `create_image` | Create nodes. |
+| `set_*` (fills, strokes, effects, auto-layout, text, node props, visibility) | Edit nodes. |
+| `duplicate_nodes` / `reparent_nodes` / `group_nodes` / `ungroup_node` / `delete_nodes` | Structure ops. |
+| `get_pages` / `create_page` / `duplicate_page` / `rename_page` / `delete_page` / `set_current_page` | Page ops (`duplicate_page` clones a page with prototype links). |
+| `save_version` | Named version checkpoint before destructive batches. |
+| `execute_code` | **Escape hatch:** run arbitrary Plugin-API JS (async IIFE, `return` JSON, console captured). Covers components/variants, variables, styles, vectors, booleans. |
+| `sync_nodes` | Copy node subtrees between two connected files (lossy rebuild). See §9. |
+| motion tools | `get_motion_styles`, `apply_animation_style`, etc. (Motion API beta). |
+
+Writes are refused in **Dev Mode** (switch to the design editor). Deletes require `confirm: true`.
+
+---
+
+## 11. setup.sh reference
+
+```bash
+./setup.sh                   # build + configure + diagnose
+./setup.sh /path/to/project  # also write figma-bridge into that project's .mcp.json
+./setup.sh --check           # diagnose only (no clone/build) — "doctor" mode
+./setup.sh --help            # usage
+```
+
+Environment:
+- `FIGMA_BRIDGE_DIR` — install location (default `~/figma-agent-bridge`).
+
+What full setup does: prereq checks → clone/update → build server + plugin → browser check (Chrome or install Chromium) → MCP config (merge into a project `.mcp.json`, or print `claude mcp add`) → health/registration/login checks → prints manual steps + workflow + reconnect reminder.
+
+`--check` runs the health, registration, and login checks with a pass/fail summary — use it whenever something feels off.
+
+---
+
+## 12. Troubleshooting
 
 | Symptom | Cause → fix |
 |---|---|
-| `list_files` returns `[]` | Plugin not running — run it in the file, keep panel open |
-| "No file connected" / wrong file edited | Pass explicit `fileKey`; check `list_files` |
-| Tool times out after long idle | Plugin iframe was killed by Figma (known platform behavior) — re-run the plugin in the file |
-| `LOGIN_REQUIRED` | Run `figma_login`, complete login in the Chrome window |
-| `PROFILE_LOCKED` | Another server instance has the bridge Chrome open — run file ops from one instance, or close the other Chrome window |
-| `duplicate_file` hangs then fails | Source not viewable with your account, or Figma changed the `/duplicate` route — duplicate manually once and report |
-| `list_account_files` misses files | It scrapes the virtualized file browser — best-effort; raise `limit`, or scroll manually and re-run |
-| Writes rejected with "Dev Mode is read-only" | Switch from Dev Mode to the design editor |
-| Fonts wrong after sync/text edit | Font not installed/available — bridge substitutes Inter and records a warning |
-| Plugin won't import | Must use the **desktop** app, not the browser |
-| Port 1994 conflicts | Another process owns it — kill it; leader-follower only coordinates bridge instances |
+| A new tool (e.g. `pull_latest`) shows "not found" but it's in the code | **Stale running server.** A session doesn't hot-reload. `/mcp reconnect` or quit & reopen Claude Code. Verify with `./setup.sh --check`. |
+| `/mcp` shows figma-bridge disconnected | `/mcp reconnect`, or restart Claude Code. Check the path in `.mcp.json` / `claude mcp get figma-bridge`. |
+| `list_files` returns `[]` | Plugin not running. Open the file in Figma desktop and run the plugin (⌥⌘P); keep the panel open. |
+| Tool times out after long idle | Figma killed the background plugin iframe. Re-run the plugin in the file. |
+| `LOGIN_REQUIRED` on a file op | Run `figma_login` and complete the login in the Chrome window. |
+| `PROFILE_LOCKED` | The bridge's Chrome profile is open in another server instance. Run file ops from one instance, or close the other bridge Chrome window. |
+| Writes rejected: "Dev Mode is read-only" | Switch the file from Dev Mode to the design editor. |
+| Plugin crashes / won't run | Make sure you ran `npm run build` in `plugin/` after pulling; re-run the plugin (it reloads the built code). |
+| `create_file`/`pull_latest` returns a weird key like "new" | Old build. Rebuild + reconnect (`./setup.sh` then reconnect). |
+| `list_account_files` slow | It reads each file's key via right-click→Copy link (one interaction per file). Keep `limit` modest. |
+| Fonts look wrong after a text op | The font isn't available locally; the bridge substitutes Inter and records a warning. |
+| Plugin won't import | Must use the Figma **desktop** app, not the browser. |
+| Wrong Figma account in the browser | Log out in the bridge's Chrome window and back into the right account, then re-check `figma_login`. |
 
-## 6. Maintenance
+---
+
+## 13. Updating & maintenance
 
 ```bash
-# pull upstream gethopp fixes
-git fetch upstream && git merge upstream/main   # resolve, rebuild
-
-# update deps
-cd server && npm update && npm run build
-cd ../plugin && npm update && npm run build
+cd ~/figma-agent-bridge         # or your FIGMA_BRIDGE_DIR
+git pull                        # get latest
+cd server && npm install && npm run build
+cd ../plugin && npm install && npm run build
 ```
 
-After plugin rebuilds, Figma picks up the new `dist/code.js` the next time you run the plugin (no re-import needed).
+Then **reconnect the bridge** (`/mcp reconnect` or restart Claude Code) and, after a plugin rebuild, re-run the plugin in your file (no re-import needed). Run `./setup.sh --check` to confirm.
+
+To pull upstream (gethopp) fixes: `git fetch upstream && git merge upstream/main` (resolve, rebuild).
+
+---
+
+## 14. Credits & license
+
+Fork of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge) (MIT) — the WebSocket transport, fileKey registry, and leader-follower election are theirs. The `execute_code` pattern follows [southleft/figma-console-mcp](https://github.com/southleft/figma-console-mcp); page tooling ideas from [arinspunk/claude-talk-to-figma-mcp](https://github.com/arinspunk/claude-talk-to-figma-mcp). Added here: file ops via embedded Playwright (create/duplicate/list/delete/**pull_latest**), `execute_code`, page tools, `save_version`, `sync_nodes`, and the diagnostics in `setup.sh`.
+
+MIT — original code © gethopp contributors, modifications © joshghal.

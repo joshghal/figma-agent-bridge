@@ -13,11 +13,15 @@ A self-owned Figma ⇄ AI-agent bridge with **all five capabilities on a free Fi
 
 Fork of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge) (MIT) — the transport (MCP server *is* the WebSocket server on `:1994`, fileKey-keyed multi-file registry, leader-follower election) is theirs. The `execute_code` pattern follows [southleft/figma-console-mcp](https://github.com/southleft/figma-console-mcp); page tooling ideas from [arinspunk/claude-talk-to-figma-mcp](https://github.com/arinspunk/claude-talk-to-figma-mcp).
 
-**📖 New here? Follow [GUIDE.md](GUIDE.md)** — step-by-step setup, tutorials for every workflow (including the duplicate → edit → sync-back loop), and troubleshooting.
+**📖 New here? Follow [GUIDE.md](GUIDE.md)** — the complete, from-zero manual: install, Claude Code setup, Figma setup, the follow-and-slice workflow, tool reference, and troubleshooting.
 
 ## Why
 
 Figma's REST API is ~6 calls/month on the free plan and its Plugin API cannot create, duplicate, or list files (single-file sandbox) — no existing bridge covers file-level operations. This bridge pairs the Plugin API (full read/write inside open files, free on every plan) with an embedded Playwright browser session (file-level operations Figma exposes only through its web UI).
+
+**You do not need the official Figma MCP (`mcp.figma.com`) or a paid Figma account** — this bridge replaces both. If the `figma` MCP is registered, you can remove it (`claude mcp remove figma`) and keep only `figma-bridge`.
+
+**Main use case:** follow a designer's file you have *read-only* access to and slice it to code — `pull_latest` duplicates it (view access is enough), you run the plugin, the agent reads it and generates code. See [GUIDE.md §8](GUIDE.md#8-daily-usage--follow--slice).
 
 ## Architecture
 
@@ -34,11 +38,12 @@ Claude/agent ⇄ MCP server (stdio, Node)
 **Fastest (teammates):** clone the repo and run the setup script — it checks prerequisites, builds the server + plugin, sets up the browser, and wires (or prints) the MCP config, then lists the remaining manual steps:
 
 ```bash
-./setup.sh                 # build + print the MCP config to add
+./setup.sh                 # build + configure + diagnose
 ./setup.sh /path/to/proj   # also writes the figma-bridge entry into that project's .mcp.json
+./setup.sh --check         # doctor: diagnose an existing install (health, MCP registration, login)
 ```
 
-Then do the 3 one-time manual steps it prints (import the plugin in Figma desktop, reconnect your MCP client, run `figma_login` once). Manual setup below if you prefer.
+Then do the 3 one-time manual steps it prints (import the plugin in Figma desktop, reconnect your MCP client, run `figma_login` once). Run `./setup.sh --check` anytime to confirm the server is healthy, MCP is registered, and login is done. Manual setup below if you prefer.
 
 **Server** (register in your MCP client, e.g. `.mcp.json`):
 
