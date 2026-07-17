@@ -66,7 +66,7 @@ cd ../plugin && npm install && npm run build
 | `figma_login` | One-time interactive login for the embedded browser. |
 | `create_file` | New blank draft via `figma.com/new`; returns `fileKey` + URL. |
 | `duplicate_file` | Duplicate any viewable file via Figma's documented `/duplicate` URL; copy lands in Drafts; returns the new `fileKey`. |
-| `list_account_files` | Scrape Drafts/Recents from the file browser (best-effort; the only way to list files on a free plan). |
+| `list_account_files` | List file **names** from the Recents browser (best-effort). Figma no longer exposes file keys in the file-browser DOM, so this returns names only — open a file to get its URL/key. |
 | `sync_nodes` | Copy subtrees between two *connected* files, either direction. `replace` mode swaps same-ID nodes (duplicates preserve node IDs), `append` adds to the current page. Saves a version checkpoint on the target first. |
 
 Everything upstream still works — see [gethopp's README](https://github.com/gethopp/figma-mcp-bridge#available-tools) for the base read/write tool catalog.

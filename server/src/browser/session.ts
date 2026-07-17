@@ -82,6 +82,15 @@ export async function closeBrowser(): Promise<void> {
 export const FILE_URL_RE =
   /figma\.com\/(?:design|file|board|slides)\/([A-Za-z0-9]+)/;
 
+// Transient placeholders Figma shows in the URL while provisioning a file
+// (figma.com/new briefly becomes figma.com/design/new before the real key).
+const RESERVED_KEYS = new Set(["new", "recent", "recents", "drafts", "files", "team"]);
+
+/** True when a captured key looks like a real Figma file key, not a placeholder. */
+export function isRealFileKey(key: string): boolean {
+  return key.length >= 8 && !RESERVED_KEYS.has(key.toLowerCase());
+}
+
 /** Accepts a full Figma file URL or a bare file key; returns the key. */
 export function parseFileKey(input: string): string {
   const match = input.match(FILE_URL_RE);

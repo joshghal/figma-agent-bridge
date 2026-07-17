@@ -7,6 +7,7 @@ import {
   assertLoggedIn,
   getContext,
   isLoginUrl,
+  isRealFileKey,
   parseFileKey,
 } from "./session.js";
 
@@ -137,7 +138,9 @@ export function registerBrowserTools(server: McpServer): void {
           await page.goto("https://www.figma.com/new", {
             waitUntil: "domcontentloaded",
           });
-          const fileKey = await waitForFileUrl(page, 60_000, () => true);
+          // figma.com/new passes through a transient design/new placeholder for
+          // ~3s before the real key is assigned — wait for a real key.
+          const fileKey = await waitForFileUrl(page, 60_000, isRealFileKey);
           let renamed = false;
           if (name) {
             renamed = await tryRenameOpenFile(page, name);
@@ -178,7 +181,7 @@ export function registerBrowserTools(server: McpServer): void {
               const newKey = await waitForFileUrl(
                 page,
                 90_000,
-                (key) => key !== sourceKey
+                (key) => key !== sourceKey && isRealFileKey(key)
               );
               return ok({
                 sourceFileKey: sourceKey,
@@ -208,62 +211,54 @@ export function registerBrowserTools(server: McpServer): void {
 
   server.tool(
     "list_account_files",
-    "List Figma files visible in your account's file browser (Drafts or Recents) by scraping figma.com/files in the bridge browser. Best-effort: returns what the file browser renders. Requires a logged-in browser session (figma_login).",
+    "List Figma files by NAME from your account's file browser (Recents), by reading figma.com/files in the bridge browser. IMPORTANT: Figma no longer exposes file keys in the file-browser DOM, so this returns file names only — not fileKeys/URLs. To act on a file (duplicate_file, plugin tools), open it once and use its URL. Requires a logged-in browser session (figma_login).",
     {
-      view: z
-        .enum(["drafts", "recents"])
-        .optional()
-        .describe("Which file-browser view to list (default drafts)"),
       limit: z
         .number()
         .optional()
         .describe("Maximum number of files to return (default 50)"),
     },
-    async ({ view, limit }): Promise<ToolResult> => {
+    async ({ limit }): Promise<ToolResult> => {
       try {
         return await withPage(async (page) => {
-          const target =
-            (view ?? "drafts") === "drafts"
-              ? "https://www.figma.com/files/drafts"
-              : "https://www.figma.com/files/recents";
-          await page.goto(target, { waitUntil: "domcontentloaded" });
-          await page.waitForTimeout(2_000);
+          // Both /files/recents and /files/drafts redirect to the team
+          // recents-and-sharing view; navigate and scrape whatever renders.
+          await page.goto("https://www.figma.com/files/recents", {
+            waitUntil: "domcontentloaded",
+          });
+          await page.waitForTimeout(3_000);
           assertLoggedIn(page);
 
-          const selector = 'a[href*="/design/"], a[href*="/file/"], a[href*="/board/"], a[href*="/slides/"]';
+          // File tiles are role="group" divs whose aria-label is the file name
+          // (no key anywhere in the DOM). Wait for at least one, then scroll.
+          const tileSelector = '[role="listitem"] [role="group"][aria-label]';
           await page
-            .waitForSelector(selector, { timeout: 15_000 })
+            .waitForSelector(tileSelector, { timeout: 15_000 })
             .catch(() => {});
-          // Nudge the virtualized list to render more tiles.
-          for (let i = 0; i < 3; i++) {
-            await page.mouse.wheel(0, 2_000);
+          for (let i = 0; i < 4; i++) {
+            await page.mouse.wheel(0, 2_500);
             await page.waitForTimeout(500);
           }
 
-          const raw = await page.$$eval(selector, (anchors) =>
-            anchors.map((a) => ({
-              href: (a as HTMLAnchorElement).href,
-              label:
-                a.getAttribute("aria-label") ||
-                a.getAttribute("title") ||
-                (a.textContent ?? "").trim().split("\n")[0],
-            }))
+          const names = await page.$$eval(tileSelector, (tiles) =>
+            tiles
+              .map((t) => t.getAttribute("aria-label") || "")
+              .filter((n) => n.trim().length > 0)
           );
 
           const seen = new Set<string>();
-          const files: Array<{ name: string; fileKey: string; fileUrl: string }> = [];
-          for (const item of raw) {
-            const match = item.href.match(FILE_URL_RE);
-            if (!match || seen.has(match[1])) continue;
-            seen.add(match[1]);
-            files.push({
-              name: item.label || "(unnamed)",
-              fileKey: match[1],
-              fileUrl: item.href.split("?")[0],
-            });
+          const files: Array<{ name: string; fileKey: null; fileUrl: null }> = [];
+          for (const name of names) {
+            if (seen.has(name)) continue;
+            seen.add(name);
+            files.push({ name, fileKey: null, fileUrl: null });
             if (files.length >= (limit ?? 50)) break;
           }
-          return ok({ view: view ?? "drafts", count: files.length, files });
+          return ok({
+            count: files.length,
+            files,
+            note: "Names only — Figma does not expose file keys in the file-browser DOM. Open a file to get its URL/key for duplicate_file or plugin tools.",
+          });
         });
       } catch (err) {
         return fail(err);
