@@ -110,7 +110,15 @@ const stringifyConsoleArg = (arg: unknown): string => {
 
 const CONSOLE_LEVELS = ["log", "info", "warn", "error", "debug"] as const;
 for (const level of CONSOLE_LEVELS) {
-  const original = console[level].bind(console);
+  // Figma's plugin sandbox doesn't define every console method (e.g. debug),
+  // so fall back to console.log / a no-op instead of crashing on startup.
+  const base =
+    typeof console[level] === "function"
+      ? console[level]
+      : typeof console.log === "function"
+        ? console.log
+        : undefined;
+  const original = base ? base.bind(console) : () => {};
   console[level] = (...args: unknown[]) => {
     original(...args);
     if (activeConsoleCapture) {
