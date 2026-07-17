@@ -194,6 +194,27 @@ delete_file {file:"<url or key>", confirm:true}  → moves to trash (recoverable
 - **The unremovable manual step:** a new/duplicated file must be opened in the desktop app and the plugin run there before plugin tools can touch it. Tool responses remind you.
 - `LOGIN_REQUIRED` error → run `figma_login`, retry.
 
+### T5b — Following a designer's file you only have read-only access to
+
+This is the common case: a designer shares their file with you (view access), and you want to keep pulling their latest changes. You **cannot** run the plugin on their original (plugins need edit access), but you don't need to — you duplicate it (view access is enough) and work on your own copy.
+
+Don't do this by hand every time. Use **`pull_latest`**:
+
+```
+pull_latest {original:"https://www.figma.com/design/THEIR_KEY/..."}
+   → duplicates their file to your Drafts (full fidelity)
+   → auto-trashes your PREVIOUS snapshot of that same file (no pile-up)
+   → remembers the new snapshot per original
+```
+
+Then open the returned file in Figma desktop and press **⌥⌘P** to run the plugin. That's the whole follow-changes loop: **`pull_latest` → ⌥⌘P**.
+
+Notes:
+- Read-only access on the original is enough — everything happens on the copy you own.
+- Full fidelity: it's Figma's own server-side duplicate (keeps components/variables/prototypes), better than `sync_nodes`' rebuild.
+- Duplicating the *same unchanged* file twice returns the same copy (Figma dedupes) — harmless; `pull_latest` won't trash the copy it just returned.
+- You can never push changes back *into* the designer's original (read-only) — but following is pull-only, so that never comes up.
+
 ### T6 — The full loop: duplicate → edit → sync back
 
 The flagship workflow. Example: restyle a frame on a copy of the design system, then push it back.

@@ -1,3 +1,7 @@
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Page } from "playwright";
@@ -127,6 +131,105 @@ async function tryRenameOpenFile(page: Page, name: string): Promise<boolean> {
   }
 }
 
+/** Duplicates a file by key via the /duplicate URL; returns the new file key. */
+async function duplicateByKey(page: Page, sourceKey: string): Promise<string> {
+  const candidates = [
+    `https://www.figma.com/design/${sourceKey}/-/duplicate`,
+    `https://www.figma.com/file/${sourceKey}/duplicate`,
+  ];
+  let lastError: unknown = null;
+  for (const url of candidates) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      return await waitForFileUrl(
+        page,
+        90_000,
+        (key) => key !== sourceKey && isRealFileKey(key)
+      );
+    } catch (err) {
+      lastError = err;
+      if (err instanceof FigmaBrowserError && err.code === "LOGIN_REQUIRED") {
+        throw err;
+      }
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new FigmaBrowserError(`Could not duplicate file ${sourceKey}`, "DUPLICATE_FAILED");
+}
+
+/**
+ * Finds a file tile by key (via Copy link) and moves it to trash, confirming
+ * Figma's modal. Returns the file name if trashed, or null if not found.
+ */
+async function trashByKey(page: Page, targetKey: string): Promise<string | null> {
+  await openFileBrowser(page);
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.wheel(0, 2_500);
+    await page.waitForTimeout(400);
+  }
+  const tiles = page.locator(TILE_SELECTOR);
+  const total = await tiles.count();
+  for (let i = 0; i < total; i++) {
+    const tile = tiles.nth(i);
+    const name = (await tile.getAttribute("aria-label")) || "";
+    let key: string | null = null;
+    try {
+      key = await keyViaCopyLink(page, tile);
+    } catch {
+      await page.keyboard.press("Escape").catch(() => {});
+      continue;
+    }
+    if (key !== targetKey) continue;
+    await tile.click({ button: "right" });
+    await page.waitForTimeout(500);
+    await clickMenuItem(page, "Move to trash");
+    const confirmBtn = page.locator(
+      '[data-testid="confirmation-modal-confirm-action-button"]'
+    );
+    await confirmBtn.click({ timeout: 5_000 });
+    await confirmBtn.waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    return name;
+  }
+  return null;
+}
+
+// Per-original snapshot tracking, so pull_latest can trash the previous copy.
+const STATE_DIR = path.join(os.homedir(), ".figma-agent-bridge");
+const TRACKING_FILE = path.join(STATE_DIR, "tracking.json");
+
+function readTracking(): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(TRACKING_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeTracking(map: Record<string, string>): void {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true });
+    writeFileSync(TRACKING_FILE, JSON.stringify(map, null, 2));
+  } catch {
+    // tracking is a convenience; ignore write failures
+  }
+}
+
+/** Best-effort: open a file in the Figma desktop app via the figma:// scheme. */
+function openFileInDesktopApp(fileKey: string): void {
+  try {
+    if (process.platform === "darwin") {
+      spawn("open", [`figma://file/${fileKey}`], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    }
+  } catch {
+    // best-effort only
+  }
+}
+
 export function registerBrowserTools(server: McpServer): void {
   server.tool(
     "figma_login",
@@ -207,38 +310,13 @@ export function registerBrowserTools(server: McpServer): void {
       try {
         const sourceKey = parseFileKey(file);
         return await withPage(async (page) => {
-          const candidates = [
-            `https://www.figma.com/design/${sourceKey}/-/duplicate`,
-            `https://www.figma.com/file/${sourceKey}/duplicate`,
-          ];
-          let lastError: unknown = null;
-          for (const url of candidates) {
-            try {
-              await page.goto(url, { waitUntil: "domcontentloaded" });
-              const newKey = await waitForFileUrl(
-                page,
-                90_000,
-                (key) => key !== sourceKey && isRealFileKey(key)
-              );
-              return ok({
-                sourceFileKey: sourceKey,
-                fileKey: newKey,
-                fileUrl: fileUrl(newKey),
-                note: `Copy created (lands in Drafts for view-only sources). ${CONNECT_HINT}`,
-              });
-            } catch (err) {
-              lastError = err;
-              if (err instanceof FigmaBrowserError && err.code === "LOGIN_REQUIRED") {
-                throw err;
-              }
-            }
-          }
-          throw lastError instanceof Error
-            ? lastError
-            : new FigmaBrowserError(
-                `Could not duplicate file ${sourceKey}`,
-                "DUPLICATE_FAILED"
-              );
+          const newKey = await duplicateByKey(page, sourceKey);
+          return ok({
+            sourceFileKey: sourceKey,
+            fileKey: newKey,
+            fileUrl: fileUrl(newKey),
+            note: `Copy created (lands in Drafts for view-only sources). ${CONNECT_HINT}`,
+          });
         });
       } catch (err) {
         return fail(err);
@@ -307,50 +385,68 @@ export function registerBrowserTools(server: McpServer): void {
         }
         const targetKey = parseFileKey(file);
         return await withPage(async (page) => {
-          await openFileBrowser(page);
-          for (let i = 0; i < 4; i++) {
-            await page.mouse.wheel(0, 2_500);
-            await page.waitForTimeout(400);
-          }
-          const tiles = page.locator(TILE_SELECTOR);
-          const total = await tiles.count();
-          for (let i = 0; i < total; i++) {
-            const tile = tiles.nth(i);
-            const name = (await tile.getAttribute("aria-label")) || "";
-            let key: string | null = null;
-            try {
-              key = await keyViaCopyLink(page, tile);
-            } catch {
-              await page.keyboard.press("Escape").catch(() => {});
-              continue;
-            }
-            if (key !== targetKey) continue;
-            // Found it — re-open the menu and move to trash.
-            await tile.click({ button: "right" });
-            await page.waitForTimeout(500);
-            await clickMenuItem(page, "Move to trash");
-            // "Move to trash" opens a confirmation modal that must be confirmed.
-            const confirmBtn = page.locator(
-              '[data-testid="confirmation-modal-confirm-action-button"]'
+          const name = await trashByKey(page, targetKey);
+          if (name === null) {
+            return fail(
+              new FigmaBrowserError(
+                `File ${targetKey} not found in the Recents browser (only recent files are scannable). Open it once so it appears in Recents, then retry.`,
+                "FILE_NOT_FOUND"
+              )
             );
-            await confirmBtn.click({ timeout: 5_000 });
-            await confirmBtn
-              .waitFor({ state: "detached", timeout: 5_000 })
-              .catch(() => {});
-            await page.waitForTimeout(500);
-            return ok({
-              deleted: true,
-              fileKey: targetKey,
-              name,
-              note: "Moved to trash (recoverable from Figma trash for 30 days).",
-            });
           }
-          return fail(
-            new FigmaBrowserError(
-              `File ${targetKey} not found in the Recents browser (only recent files are scannable). Open it once so it appears in Recents, then retry.`,
-              "FILE_NOT_FOUND"
-            )
-          );
+          return ok({
+            deleted: true,
+            fileKey: targetKey,
+            name,
+            note: "Moved to trash (recoverable from Figma trash for 30 days).",
+          });
+        });
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
+
+  server.tool(
+    "pull_latest",
+    "Follow a designer's file you have read-only access to. Makes a fresh, full-fidelity duplicate of the original (your working snapshot in Drafts) and AUTOMATICALLY trashes your previous snapshot of that same original, so copies don't pile up. Remembers the last snapshot per original. Use this instead of duplicating by hand every time the designer updates the file. After it returns, open the new file in the Figma desktop app and press ⌥⌘P to run the bridge plugin, then read the latest design. Requires a logged-in browser session (figma_login).",
+    {
+      original: z
+        .string()
+        .describe(
+          "The designer's original file you're following: a figma.com URL or file key (the source of truth; read-only access is enough)"
+        ),
+      openInDesktop: z
+        .boolean()
+        .optional()
+        .describe(
+          "Best-effort: also open the new snapshot in the Figma desktop app via the figma:// link (default true; macOS only)"
+        ),
+    },
+    async ({ original, openInDesktop }): Promise<ToolResult> => {
+      try {
+        const sourceKey = parseFileKey(original);
+        return await withPage(async (page) => {
+          const newKey = await duplicateByKey(page, sourceKey);
+          const tracking = readTracking();
+          const prev = tracking[sourceKey];
+          let trashedPreviousSnapshot: string | null = null;
+          if (prev && prev !== newKey) {
+            const trashedName = await trashByKey(page, prev).catch(() => null);
+            if (trashedName !== null) trashedPreviousSnapshot = prev;
+          }
+          tracking[sourceKey] = newKey;
+          writeTracking(tracking);
+          if (openInDesktop !== false) openFileInDesktopApp(newKey);
+          return ok({
+            originalFileKey: sourceKey,
+            fileKey: newKey,
+            fileUrl: fileUrl(newKey),
+            trashedPreviousSnapshot,
+            note: `Fresh snapshot ready${
+              trashedPreviousSnapshot ? " (previous snapshot moved to trash)" : ""
+            }. Open it in the Figma desktop app and press ⌥⌘P to run the bridge plugin, then I can read the latest design.`,
+          });
         });
       } catch (err) {
         return fail(err);
