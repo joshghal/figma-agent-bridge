@@ -62,20 +62,76 @@ health_check() {
   fi
 }
 
-check_registration() {
-  say "MCP registration — is figma-bridge configured in Claude Code?"
+print_manual_config() {
+  printf '%s{\n  "mcpServers": {\n    "figma-bridge": {\n      "type": "stdio",\n      "command": "%s",\n      "args": ["%s"]\n    }\n  }\n}%s\n' "$DIM" "$NODE_BIN" "$SERVER_ENTRY" "$RST"
+}
+
+# Registers the bridge robustly: clears ANY prior figma-bridge entries (so a
+# stale/wrong-path one can't override), then adds it once with ABSOLUTE paths at
+# user scope (available in every project, no relative-path mistakes possible).
+configure_mcp() {
+  say "Registering figma-bridge with Claude Code (absolute paths)"
   if ! command -v claude >/dev/null 2>&1; then
-    info "Claude CLI not found — can't auto-check. Make sure your MCP client has:"
-    info "    figma-bridge -> node $SERVER_ENTRY"
+    info "Claude CLI not found — add this to your MCP client config manually:"
+    print_manual_config
     return
   fi
-  if claude mcp get figma-bridge >/dev/null 2>&1; then
-    ok "figma-bridge is registered."
+  for s in local project user; do
+    claude mcp remove figma-bridge -s "$s" >/dev/null 2>&1 || true
+  done
+  if claude mcp add figma-bridge --scope user -- "$NODE_BIN" "$SERVER_ENTRY" >/dev/null 2>&1; then
+    ok "Registered figma-bridge (user scope, all projects):"
+    info "    $NODE_BIN $SERVER_ENTRY"
   else
-    warn "figma-bridge is NOT registered. Add it with:"
-    info "    claude mcp add figma-bridge -- node $SERVER_ENTRY"
-    info "    (append --scope user to make it available in every project)"
+    warn "claude CLI registration failed — add manually:"
+    print_manual_config
+  fi
+  # Optional: also write into a specific project's shared .mcp.json.
+  if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then
+    node -e '
+      const fs = require("fs");
+      const [target, entryPath, nodeBin] = process.argv.slice(1);
+      let cfg = {};
+      try { cfg = JSON.parse(fs.readFileSync(target, "utf8")); } catch {}
+      cfg.mcpServers = cfg.mcpServers || {};
+      cfg.mcpServers["figma-bridge"] = { type: "stdio", command: nodeBin, args: [entryPath] };
+      fs.writeFileSync(target, JSON.stringify(cfg, null, 2) + "\n");
+    ' "$TARGET_DIR/.mcp.json" "$SERVER_ENTRY" "$NODE_BIN"
+    ok "Also wrote figma-bridge into $TARGET_DIR/.mcp.json (absolute paths)"
+  fi
+}
+
+check_registration() {
+  say "MCP registration — is figma-bridge configured correctly?"
+  if ! command -v claude >/dev/null 2>&1; then
+    info "Claude CLI not found — ensure your MCP client runs: $NODE_BIN $SERVER_ENTRY"
+    return
+  fi
+  local out; out="$(claude mcp get figma-bridge 2>/dev/null || true)"
+  if [ -z "$out" ] || printf '%s' "$out" | grep -qiE 'no mcp server|not found'; then
+    warn "figma-bridge is NOT registered. Fix:"
+    info "    claude mcp add figma-bridge --scope user -- $NODE_BIN $SERVER_ENTRY"
+    PROBLEMS=$((PROBLEMS + 1)); return
+  fi
+  # Extract the registered server path and validate it — the #1 real-world break
+  # is a stale entry pointing at a path that doesn't exist ("Connection closed").
+  local regpath; regpath="$(printf '%s\n' "$out" | awk -F'Args:' '/Args:/{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')"
+  if [ -n "$regpath" ] && [ ! -f "$regpath" ]; then
+    warn "figma-bridge points to a MISSING file: $regpath"
+    info "    This causes 'MCP error -32000: Connection closed'. Fix:"
+    info "    for s in local project user; do claude mcp remove figma-bridge -s \$s; done"
+    info "    claude mcp add figma-bridge --scope user -- $NODE_BIN $SERVER_ENTRY"
     PROBLEMS=$((PROBLEMS + 1))
+  elif [ -n "$regpath" ] && [ "$regpath" != "$SERVER_ENTRY" ]; then
+    warn "figma-bridge points to a DIFFERENT path than this install:"
+    info "    registered: $regpath"
+    info "    expected:   $SERVER_ENTRY"
+    info "    Re-run ./setup.sh to fix, or re-register with the correct absolute path."
+    PROBLEMS=$((PROBLEMS + 1))
+  elif printf '%s' "$out" | grep -qi connected; then
+    ok "figma-bridge registered and connected ($regpath)."
+  else
+    ok "figma-bridge registered ($regpath) — reconnect the session to load it."
   fi
 }
 
@@ -155,26 +211,7 @@ fi
 
 [ -f "$SERVER_ENTRY" ] || die "Build did not produce $SERVER_ENTRY — check the output above."
 
-say "MCP server configuration"
-if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then
-  node -e '
-    const fs = require("fs");
-    const [target, entryPath, nodeBin] = process.argv.slice(1);
-    let cfg = {};
-    try { cfg = JSON.parse(fs.readFileSync(target, "utf8")); } catch {}
-    cfg.mcpServers = cfg.mcpServers || {};
-    cfg.mcpServers["figma-bridge"] = { type: "stdio", command: nodeBin, args: [entryPath] };
-    fs.writeFileSync(target, JSON.stringify(cfg, null, 2) + "\n");
-  ' "$TARGET_DIR/.mcp.json" "$SERVER_ENTRY" "$NODE_BIN"
-  ok "Wrote the figma-bridge entry into $TARGET_DIR/.mcp.json (node: $NODE_BIN)"
-elif command -v claude >/dev/null 2>&1; then
-  info "Register with the Claude CLI (recommended):"
-  info "    claude mcp add figma-bridge -- $NODE_BIN $SERVER_ENTRY"
-  info "    (append --scope user for every project)"
-else
-  info "Add this to your MCP client config:"
-  printf '%s{\n  "mcpServers": {\n    "figma-bridge": {\n      "type": "stdio",\n      "command": "%s",\n      "args": ["%s"]\n    }\n  }\n}%s\n' "$DIM" "$NODE_BIN" "$SERVER_ENTRY" "$RST"
-fi
+configure_mcp
 
 # --- verify + guide ---------------------------------------------------------
 health_check

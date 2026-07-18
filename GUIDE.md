@@ -101,7 +101,7 @@ Rebuild after pulling changes (`npm run build` in whichever of `server/` or `plu
 
 ## 5. Claude Code setup (MCP)
 
-Register the server with Claude Code. Pick one:
+**If you ran `setup.sh`, this is already done** — it registers `figma-bridge` at **user scope** with **absolute paths**, and first removes any prior entries so a stale/wrong-path one can't override it. Skip to §6. Otherwise, register manually:
 
 > **⚠️ Use the ABSOLUTE path to `node`, not bare `"node"`.** Claude Code launched from the macOS Dock/Finder often has a trimmed PATH (no Homebrew/nvm), so `"command": "node"` fails to spawn with **`MCP error -32000: Connection closed`** and the server shows **"Failed"**. Find the absolute path with `command -v node` (e.g. `/opt/homebrew/bin/node`). `setup.sh` does this for you.
 
