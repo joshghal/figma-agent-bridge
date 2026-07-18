@@ -13,6 +13,9 @@
 #   ./setup.sh /path/to/project  also write figma-bridge into that .mcp.json
 #   ./setup.sh --check           diagnose only (no clone/build) — a "doctor"
 #
+# A single `./setup.sh` prepares everything: it wipes any existing figma-bridge
+# registration and reinstalls it fresh with absolute paths — no extra flags.
+#
 # Env:
 #   FIGMA_BRIDGE_DIR   install location (default: ~/figma-agent-bridge)
 #
@@ -75,6 +78,12 @@ configure_mcp() {
     info "Claude CLI not found — add this to your MCP client config manually:"
     print_manual_config
     return
+  fi
+  # If one already exists, report it, then wipe EVERY scope so nothing stale
+  # (e.g. a wrong-path entry) can survive or override the fresh registration.
+  local existing; existing="$(claude mcp get figma-bridge 2>/dev/null | awk -F'Args:' '/Args:/{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')"
+  if [ -n "$existing" ]; then
+    info "Existing registration found ($existing) — removing it and reinstalling fresh."
   fi
   for s in local project user; do
     claude mcp remove figma-bridge -s "$s" >/dev/null 2>&1 || true
