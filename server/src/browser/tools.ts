@@ -164,6 +164,25 @@ async function assertHasAccess(page: Page, sourceKey: string): Promise<void> {
   }
 }
 
+/** Reads the filename shown in the editor tab, or null if not found. */
+async function getOpenFileName(page: Page): Promise<string | null> {
+  try {
+    const text = (
+      await page.locator('[data-testid="filename"]').first().innerText({ timeout: 5_000 })
+    ).trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Builds "[Duplicate] <base> <YYYY-MM-DD>", stripping a trailing "(Copy)". */
+function datedDuplicateName(currentName: string | null): string {
+  const base = (currentName ?? "Figma file").replace(/\s*\(Copy\)\s*$/i, "").trim();
+  const date = new Date().toISOString().slice(0, 10);
+  return `[Duplicate] ${base} ${date}`;
+}
+
 /** Duplicates a file by key via the /duplicate URL; returns the new file key. */
 async function duplicateByKey(page: Page, sourceKey: string): Promise<string> {
   const candidates = [
@@ -484,6 +503,12 @@ export function registerBrowserTools(server: McpServer): void {
         .describe(
           "The designer's original file you're following: a figma.com URL or file key (the source of truth; read-only access is enough)"
         ),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Rename the new snapshot to this exact title. If omitted, it is auto-named "[Duplicate] <original name> <YYYY-MM-DD>".'
+        ),
       openInDesktop: z
         .boolean()
         .optional()
@@ -491,11 +516,17 @@ export function registerBrowserTools(server: McpServer): void {
           "Best-effort: also open the new snapshot in the Figma desktop app via the figma:// link (default true; macOS only)"
         ),
     },
-    async ({ original, openInDesktop }): Promise<ToolResult> => {
+    async ({ original, name, openInDesktop }): Promise<ToolResult> => {
       try {
         const sourceKey = parseFileKey(original);
         return await withPage(async (page) => {
           const newKey = await duplicateByKey(page, sourceKey);
+          // The page is now on the new copy's editor — rename it before anything
+          // else. Best-effort: a failed rename leaves Figma's "(Copy)" name.
+          await page.waitForTimeout(2_000);
+          const desiredName = name ?? datedDuplicateName(await getOpenFileName(page));
+          const renamed = await tryRenameOpenFile(page, desiredName);
+          const snapshotName = renamed ? desiredName : null;
           const tracking = readTracking();
           const prev = tracking[sourceKey];
           let trashedPreviousSnapshot: string | null = null;
@@ -510,8 +541,12 @@ export function registerBrowserTools(server: McpServer): void {
             originalFileKey: sourceKey,
             fileKey: newKey,
             fileUrl: fileUrl(newKey),
+            snapshotName,
+            renamed,
             trashedPreviousSnapshot,
             note: `Fresh snapshot ready${
+              snapshotName ? ` — named "${snapshotName}"` : ""
+            }${
               trashedPreviousSnapshot ? " (previous snapshot moved to trash)" : ""
             }. Open it in the Figma desktop app and press ⌥⌘P to run the bridge plugin, then I can read the latest design.`,
           });
