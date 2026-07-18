@@ -78,6 +78,23 @@ print_manual_config() {
   printf '%s{\n  "mcpServers": {\n    "figma-bridge": {\n      "type": "stdio",\n      "command": "%s",\n      "args": ["%s"]\n    }\n  }\n}%s\n' "$DIM" "$NODE_BIN" "$SERVER_ENTRY" "$RST"
 }
 
+# Reads figma-bridge's registered server path straight from the config files.
+# We do NOT use `claude mcp get`/`list` — those health-check every configured MCP
+# server and can hang on an unrelated one (blender, connectors, ...). Prints the
+# registered path, or empty if not registered.
+registered_server_path() {
+  node -e '
+    const fs=require("fs"), os=require("os"), path=require("path");
+    const files=[path.join(os.homedir(),".claude.json"), path.join(process.cwd(),".mcp.json")];
+    let out="";
+    const walk=(o)=>{ if(!o||typeof o!=="object"||out) return;
+      if(o.mcpServers && o.mcpServers["figma-bridge"]){ out=[].concat(o.mcpServers["figma-bridge"].args||[]).join(" ").trim(); if(out) return; }
+      for(const k in o){ walk(o[k]); if(out) return; } };
+    for(const f of files){ try{ walk(JSON.parse(fs.readFileSync(f,"utf8"))); }catch{} if(out) break; }
+    process.stdout.write(out);
+  ' 2>/dev/null
+}
+
 # Registers the bridge robustly: clears ANY prior figma-bridge entries (so a
 # stale/wrong-path one can't override), then adds it once with ABSOLUTE paths at
 # user scope (available in every project, no relative-path mistakes possible).
@@ -90,7 +107,7 @@ configure_mcp() {
   fi
   # If one already exists, report it, then wipe EVERY scope so nothing stale
   # (e.g. a wrong-path entry) can survive or override the fresh registration.
-  local existing; existing="$(claude mcp get figma-bridge 2>/dev/null | awk -F'Args:' '/Args:/{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')"
+  local existing; existing="$(registered_server_path)"
   if [ -n "$existing" ]; then
     info "Existing registration found ($existing) — removing it and reinstalling fresh."
   fi
@@ -121,35 +138,27 @@ configure_mcp() {
 
 check_registration() {
   say "MCP registration — is figma-bridge configured correctly?"
-  if ! command -v claude >/dev/null 2>&1; then
-    info "Claude CLI not found — ensure your MCP client runs: $NODE_BIN $SERVER_ENTRY"
-    return
-  fi
-  local out; out="$(claude mcp get figma-bridge 2>/dev/null || true)"
-  if [ -z "$out" ] || printf '%s' "$out" | grep -qiE 'no mcp server|not found'; then
-    warn "figma-bridge is NOT registered. Fix:"
-    info "    claude mcp add figma-bridge --scope user -- $NODE_BIN $SERVER_ENTRY"
+  # Read the registration from the config file (no server health-check / hang).
+  local regpath; regpath="$(registered_server_path)"
+  if [ -z "$regpath" ]; then
+    warn "figma-bridge is NOT registered. Re-run ./setup.sh (it registers it)."
     PROBLEMS=$((PROBLEMS + 1)); return
   fi
-  # Extract the registered server path and validate it — the #1 real-world break
-  # is a stale entry pointing at a path that doesn't exist ("Connection closed").
-  local regpath; regpath="$(printf '%s\n' "$out" | awk -F'Args:' '/Args:/{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')"
-  if [ -n "$regpath" ] && [ ! -f "$regpath" ]; then
-    warn "figma-bridge points to a MISSING file: $regpath"
-    info "    This causes 'MCP error -32000: Connection closed'. Fix:"
-    info "    for s in local project user; do claude mcp remove figma-bridge -s \$s; done"
-    info "    claude mcp add figma-bridge --scope user -- $NODE_BIN $SERVER_ENTRY"
+  # regpath is the server .js path; validate it — the #1 real-world break is a
+  # stale entry pointing at a path that doesn't exist ("Connection closed").
+  local serverfile; serverfile="$(printf '%s' "$regpath" | awk '{print $NF}')"
+  if [ ! -f "$serverfile" ]; then
+    warn "figma-bridge points to a MISSING file: $serverfile"
+    info "    This causes 'MCP error -32000: Connection closed'. Re-run ./setup.sh to fix."
     PROBLEMS=$((PROBLEMS + 1))
-  elif [ -n "$regpath" ] && [ "$regpath" != "$SERVER_ENTRY" ]; then
+  elif [ "$serverfile" != "$SERVER_ENTRY" ]; then
     warn "figma-bridge points to a DIFFERENT path than this install:"
-    info "    registered: $regpath"
+    info "    registered: $serverfile"
     info "    expected:   $SERVER_ENTRY"
-    info "    Re-run ./setup.sh to fix, or re-register with the correct absolute path."
+    info "    Re-run ./setup.sh to fix."
     PROBLEMS=$((PROBLEMS + 1))
-  elif printf '%s' "$out" | grep -qi connected; then
-    ok "figma-bridge registered and connected ($regpath)."
   else
-    ok "figma-bridge registered ($regpath) — reconnect the session to load it."
+    ok "figma-bridge registered ($serverfile). Reconnect the session to load it."
   fi
 }
 
