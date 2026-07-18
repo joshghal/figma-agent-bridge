@@ -33,7 +33,7 @@ const fail = (err: unknown): ToolResult => {
   const payload: Record<string, unknown> = { error: message, code };
   // A timeout on a file op usually means the logged-in account can't see the
   // file (wrong account) — surface the account-switch path.
-  if (/timeout|waitforurl/i.test(message)) {
+  if (code === "NO_ACCESS" || /timeout|waitforurl/i.test(message)) {
     payload.hint =
       "The file may not exist, or the account logged into the bridge browser may not have access to it (e.g. your personal email vs the account the designer shared the file with). Run figma_login with switchAccount:true to sign in as an account that can view this file, then retry.";
   }
@@ -138,6 +138,32 @@ async function tryRenameOpenFile(page: Page, name: string): Promise<boolean> {
   }
 }
 
+// Keys already returned by a successful duplicate this process. Two real
+// duplicates always get distinct keys, so a repeat means no new copy was made
+// (usually because the logged-in account can't view the source) — we reject it
+// instead of echoing a stale/phantom key.
+const seenDuplicateKeys = new Set<string>();
+
+const noAccessError = (sourceKey: string): FigmaBrowserError =>
+  new FigmaBrowserError(
+    `The Figma account logged into the bridge browser can't access ${sourceKey}, so no copy was created. ` +
+      `Run figma_login with switchAccount:true to sign in as the account the file is shared with, then retry.`,
+    "NO_ACCESS"
+  );
+
+/**
+ * Throws NO_ACCESS if Figma is showing its "you need access" wall instead of the
+ * file. Best-effort: a miss just falls through to the timeout path in waitForFileUrl.
+ */
+async function assertHasAccess(page: Page, sourceKey: string): Promise<void> {
+  const text = await page
+    .evaluate(() => document.body?.innerText ?? "")
+    .catch(() => "");
+  if (/you need access|request access|don.?t have access|ask (?:the owner|for access)/i.test(text)) {
+    throw noAccessError(sourceKey);
+  }
+}
+
 /** Duplicates a file by key via the /duplicate URL; returns the new file key. */
 async function duplicateByKey(page: Page, sourceKey: string): Promise<string> {
   const candidates = [
@@ -148,14 +174,28 @@ async function duplicateByKey(page: Page, sourceKey: string): Promise<string> {
   for (const url of candidates) {
     try {
       await page.goto(url, { waitUntil: "domcontentloaded" });
-      return await waitForFileUrl(
+      // Give the access wall a moment to render, then fail fast if it's shown
+      // rather than waiting the full timeout below.
+      await page.waitForTimeout(1_500);
+      await assertHasAccess(page, sourceKey);
+      const newKey = await waitForFileUrl(
         page,
         90_000,
         (key) => key !== sourceKey && isRealFileKey(key)
       );
+      // A key we've already handed back is not a fresh copy — treat it as a
+      // no-copy-made (wrong account) rather than returning a phantom.
+      if (seenDuplicateKeys.has(newKey)) {
+        throw noAccessError(sourceKey);
+      }
+      seenDuplicateKeys.add(newKey);
+      return newKey;
     } catch (err) {
       lastError = err;
-      if (err instanceof FigmaBrowserError && err.code === "LOGIN_REQUIRED") {
+      if (
+        err instanceof FigmaBrowserError &&
+        (err.code === "LOGIN_REQUIRED" || err.code === "NO_ACCESS")
+      ) {
         throw err;
       }
     }
@@ -328,7 +368,7 @@ export function registerBrowserTools(server: McpServer): void {
 
   server.tool(
     "duplicate_file",
-    "Duplicate a Figma file you can view, using Figma's documented /duplicate URL. The copy lands in your Drafts (or next to the original if you have edit access). Returns the new fileKey and URL. Requires a logged-in browser session (figma_login).",
+    "Duplicate a Figma file you can view, using Figma's documented /duplicate URL. The copy lands in your Drafts (or next to the original if you have edit access). Returns the new fileKey and URL. If the logged-in account can't view the file, fails with NO_ACCESS instead of returning a phantom key — switch accounts with figma_login switchAccount:true. Requires a logged-in browser session (figma_login).",
     {
       file: z
         .string()
