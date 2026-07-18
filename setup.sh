@@ -266,12 +266,19 @@ say "Building the MCP server"
 say "Building the Figma plugin"
 ( cd "$INSTALL_DIR/plugin" && npm install && npm run build )
 
-say "Checking the browser used for file operations"
-if [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Google Chrome.app" ]; then
-  ok "Google Chrome found — the bridge will use it."
+say "Setting up the browser used for file operations"
+# Always ensure Playwright's Chromium is available — it's the reliable fallback.
+# The bridge prefers system Google Chrome at launch when present, but if that
+# fails (locked profile, version mismatch) it falls back to Chromium, which must
+# actually be installed. Idempotent: a no-op if already downloaded.
+if ( cd "$INSTALL_DIR/server" && npx --yes playwright install chromium ); then
+  ok "Playwright Chromium ready (fallback browser)."
 else
-  warn "Google Chrome not found — installing Playwright's bundled Chromium."
-  ( cd "$INSTALL_DIR/server" && npx --yes playwright install chromium )
+  warn "Could not install Chromium — run manually: (cd $INSTALL_DIR/server && npx playwright install chromium)"
+  PROBLEMS=$((PROBLEMS + 1))
+fi
+if [ -d "/Applications/Google Chrome.app" ]; then
+  ok "System Google Chrome present (preferred at launch)."
 fi
 
 [ -f "$SERVER_ENTRY" ] || die "Build did not produce $SERVER_ENTRY — check the output above."

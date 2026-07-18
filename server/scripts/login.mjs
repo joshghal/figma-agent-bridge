@@ -29,10 +29,13 @@ try {
 } catch (e) {
   const msg = String(e && e.message);
   if (/ProcessSingleton|already running|context or browser has been closed/i.test(msg)) {
-    console.error("The bridge browser profile is already open (another instance). Close it, then re-run — or you may already be logged in.");
+    console.error("The bridge browser profile is already in use — the bridge MCP server likely has it open.");
+    console.error("Log in via the MCP tool instead: ask your agent to run figma_login (add switchAccount:true to change accounts).");
+  } else if (/Executable doesn't exist|playwright install/i.test(msg)) {
+    console.error("Playwright's browser isn't installed. Run:  npx playwright install chromium  (in the server/ folder), then retry.");
   } else {
     console.error("Could not open a browser:", msg);
-    console.error("If Google Chrome isn't installed, run: npx playwright install chromium");
+    console.error("Try: npx playwright install chromium  (in the server/ folder).");
   }
   process.exit(1);
 }
