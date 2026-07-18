@@ -30,8 +30,15 @@ const ok = (data: unknown): ToolResult => ({
 const fail = (err: unknown): ToolResult => {
   const message = err instanceof Error ? err.message : String(err);
   const code = err instanceof FigmaBrowserError ? err.code : "BROWSER_ERROR";
+  const payload: Record<string, unknown> = { error: message, code };
+  // A timeout on a file op usually means the logged-in account can't see the
+  // file (wrong account) — surface the account-switch path.
+  if (/timeout|waitforurl/i.test(message)) {
+    payload.hint =
+      "The file may not exist, or the account logged into the bridge browser may not have access to it (e.g. your personal email vs the account the designer shared the file with). Run figma_login with switchAccount:true to sign in as an account that can view this file, then retry.";
+  }
   return {
-    content: [{ type: "text", text: JSON.stringify({ error: message, code }) }],
+    content: [{ type: "text", text: JSON.stringify(payload) }],
     isError: true,
   };
 };
@@ -233,7 +240,7 @@ function openFileInDesktopApp(fileKey: string): void {
 export function registerBrowserTools(server: McpServer): void {
   server.tool(
     "figma_login",
-    "Open a browser window for logging into Figma. The session persists in the bridge's browser profile, so this is only needed once (or after the session expires). Waits until the login completes.",
+    "Open a browser window for logging into Figma. The session persists in the bridge's browser profile, so this is only needed once (or after the session expires). Waits until login completes. Use switchAccount:true to sign OUT of the current account first and log into a different one — needed when the currently logged-in account can't access the designer's file.",
     {
       timeoutMs: z
         .number()
@@ -241,10 +248,31 @@ export function registerBrowserTools(server: McpServer): void {
         .describe(
           "How long to wait for the user to finish logging in, in milliseconds (default 180000)"
         ),
+      switchAccount: z
+        .boolean()
+        .optional()
+        .describe(
+          "Log OUT of the current Figma account first, then wait for a fresh login. Use this to switch to an account that has access to the designer's file."
+        ),
     },
-    async ({ timeoutMs }): Promise<ToolResult> => {
+    async ({ timeoutMs, switchAccount }): Promise<ToolResult> => {
       try {
         return await withPage(async (page) => {
+          if (switchAccount) {
+            // Sign out so a different account can log in.
+            await page
+              .goto("https://www.figma.com/logout", { waitUntil: "domcontentloaded" })
+              .catch(() => {});
+            await page.waitForTimeout(2_000);
+            await page
+              .goto("https://www.figma.com/login", { waitUntil: "domcontentloaded" })
+              .catch(() => {});
+            await page.waitForTimeout(1_500);
+            await page.waitForURL((url) => !isLoginUrl(url.toString()), {
+              timeout: timeoutMs ?? 180_000,
+            });
+            return ok({ loggedIn: true, switchedAccount: true });
+          }
           await page.goto("https://www.figma.com/files", {
             waitUntil: "domcontentloaded",
           });
