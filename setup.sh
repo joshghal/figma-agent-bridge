@@ -36,6 +36,9 @@ die()  { printf '%sxx %s%s\n' "$RED" "$*" "$RST" >&2; exit 1; }
 
 SERVER_ENTRY="$INSTALL_DIR/server/dist/index.js"
 HEALTHCHECK="$INSTALL_DIR/server/scripts/healthcheck.mjs"
+# Absolute node path — GUI-launched Claude Code often lacks Homebrew/nvm in PATH,
+# so a bare "node" command fails to spawn ("MCP error -32000: Connection closed").
+NODE_BIN="$(command -v node || echo node)"
 PROBLEMS=0
 
 # --- diagnostics (used by both setup and --check) ---------------------------
@@ -156,21 +159,21 @@ say "MCP server configuration"
 if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then
   node -e '
     const fs = require("fs");
-    const [target, entryPath] = process.argv.slice(1);
+    const [target, entryPath, nodeBin] = process.argv.slice(1);
     let cfg = {};
     try { cfg = JSON.parse(fs.readFileSync(target, "utf8")); } catch {}
     cfg.mcpServers = cfg.mcpServers || {};
-    cfg.mcpServers["figma-bridge"] = { type: "stdio", command: "node", args: [entryPath] };
+    cfg.mcpServers["figma-bridge"] = { type: "stdio", command: nodeBin, args: [entryPath] };
     fs.writeFileSync(target, JSON.stringify(cfg, null, 2) + "\n");
-  ' "$TARGET_DIR/.mcp.json" "$SERVER_ENTRY"
-  ok "Wrote the figma-bridge entry into $TARGET_DIR/.mcp.json"
+  ' "$TARGET_DIR/.mcp.json" "$SERVER_ENTRY" "$NODE_BIN"
+  ok "Wrote the figma-bridge entry into $TARGET_DIR/.mcp.json (node: $NODE_BIN)"
 elif command -v claude >/dev/null 2>&1; then
   info "Register with the Claude CLI (recommended):"
-  info "    claude mcp add figma-bridge -- node $SERVER_ENTRY"
+  info "    claude mcp add figma-bridge -- $NODE_BIN $SERVER_ENTRY"
   info "    (append --scope user for every project)"
 else
   info "Add this to your MCP client config:"
-  printf '%s{\n  "mcpServers": {\n    "figma-bridge": {\n      "type": "stdio",\n      "command": "node",\n      "args": ["%s"]\n    }\n  }\n}%s\n' "$DIM" "$SERVER_ENTRY" "$RST"
+  printf '%s{\n  "mcpServers": {\n    "figma-bridge": {\n      "type": "stdio",\n      "command": "%s",\n      "args": ["%s"]\n    }\n  }\n}%s\n' "$DIM" "$NODE_BIN" "$SERVER_ENTRY" "$RST"
 fi
 
 # --- verify + guide ---------------------------------------------------------

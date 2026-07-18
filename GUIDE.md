@@ -103,20 +103,23 @@ Rebuild after pulling changes (`npm run build` in whichever of `server/` or `plu
 
 Register the server with Claude Code. Pick one:
 
+> **⚠️ Use the ABSOLUTE path to `node`, not bare `"node"`.** Claude Code launched from the macOS Dock/Finder often has a trimmed PATH (no Homebrew/nvm), so `"command": "node"` fails to spawn with **`MCP error -32000: Connection closed`** and the server shows **"Failed"**. Find the absolute path with `command -v node` (e.g. `/opt/homebrew/bin/node`). `setup.sh` does this for you.
+
 **CLI (recommended):**
 ```bash
-claude mcp add figma-bridge -- node /ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js
+NODE=$(command -v node)   # e.g. /opt/homebrew/bin/node
+claude mcp add figma-bridge -- "$NODE" /ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js
 # add --scope user to make it available in every project:
-claude mcp add figma-bridge --scope user -- node /ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js
+claude mcp add figma-bridge --scope user -- "$NODE" /ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js
 ```
 
-**Or edit `.mcp.json`** in your project:
+**Or edit `.mcp.json`** in your project (use the absolute node path):
 ```json
 {
   "mcpServers": {
     "figma-bridge": {
       "type": "stdio",
-      "command": "node",
+      "command": "/opt/homebrew/bin/node",
       "args": ["/ABSOLUTE/PATH/TO/figma-agent-bridge/server/dist/index.js"]
     }
   }
@@ -253,6 +256,7 @@ What full setup does: prereq checks → clone/update → build server + plugin �
 
 | Symptom | Cause → fix |
 |---|---|
+| **`MCP error -32000: Connection closed`** / figma-bridge shows **"Failed"** / plugin stuck "Disconnected" and nothing on `:1994` | Claude Code can't launch `node` — its PATH lacks Homebrew/nvm. Set `command` to the **absolute** node path (`command -v node`, e.g. `/opt/homebrew/bin/node`) in `.mcp.json` / `claude mcp add`, then **fully quit & reopen** Claude Code. (`setup.sh` writes the absolute path automatically.) Confirm the server is healthy first with `./setup.sh --check`. |
 | A new tool (e.g. `pull_latest`) shows "not found" but it's in the code | **Stale running server.** A session doesn't hot-reload. `/mcp reconnect` or quit & reopen Claude Code. Verify with `./setup.sh --check`. |
 | `/mcp` shows figma-bridge disconnected | `/mcp reconnect`, or restart Claude Code. Check the path in `.mcp.json` / `claude mcp get figma-bridge`. |
 | `list_files` returns `[]` | Plugin not running. Open the file in Figma desktop and run the plugin (⌥⌘P); keep the panel open. |
