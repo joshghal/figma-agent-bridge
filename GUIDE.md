@@ -77,14 +77,14 @@ MCP server  (node server/dist/index.js)
 ```bash
 git clone https://github.com/joshghal/figma-agent-bridge.git
 cd figma-agent-bridge
-./setup.sh
+bash setup.sh
 ```
 
 `setup.sh` checks prerequisites, builds the server + plugin, sorts out the browser, prints the MCP config, then runs health/registration/login checks and lists the manual steps. See [setup.sh reference](#11-setupsh-reference).
 
 To also write the MCP entry into a project automatically:
 ```bash
-./setup.sh /path/to/your/project     # merges figma-bridge into that project's .mcp.json
+bash setup.sh /path/to/your/project     # merges figma-bridge into that project's .mcp.json
 ```
 
 ### Option B — manual
@@ -152,7 +152,7 @@ Ask your agent to run **`figma_login`**. A Chrome window opens on the Figma logi
 ## 7. Verify everything (doctor)
 
 ```bash
-./setup.sh --check
+bash setup.sh --check
 ```
 
 This runs diagnostics only (no rebuild) and reports:
@@ -239,10 +239,10 @@ Writes are refused in **Dev Mode** (switch to the design editor). Deletes requir
 ## 11. setup.sh reference
 
 ```bash
-./setup.sh                   # build + configure + diagnose
-./setup.sh /path/to/project  # also write figma-bridge into that project's .mcp.json
-./setup.sh --check           # diagnose only (no clone/build) — "doctor" mode
-./setup.sh --help            # usage
+bash setup.sh                   # build + configure + diagnose
+bash setup.sh /path/to/project  # also write figma-bridge into that project's .mcp.json
+bash setup.sh --check           # diagnose only (no clone/build) — "doctor" mode
+bash setup.sh --help            # usage
 ```
 
 Environment:
@@ -258,8 +258,8 @@ What full setup does: prereq checks → clone/update → build server + plugin �
 
 | Symptom | Cause → fix |
 |---|---|
-| **`MCP error -32000: Connection closed`** / figma-bridge **"Failed"** / plugin stuck "Disconnected", nothing on `:1994` | The client can't spawn the server. **First diagnose with `claude mcp get figma-bridge`** — it prints the actual **Command, Args, and Scope** being used. Two common causes: **(a) wrong/relative server path** — e.g. a `local`-scope entry pointing at `.../<project>/server/dist/index.js` (which doesn't exist) that *overrides* your `.mcp.json`. Fix: `claude mcp remove figma-bridge -s local`, then re-add with **absolute** paths: `claude mcp add figma-bridge -s local -- $(command -v node) /ABS/PATH/figma-agent-bridge/server/dist/index.js`. **(b) bare `node` not on the app's PATH** (GUI launch lacks Homebrew/nvm) → use the absolute node path. Always use absolute paths for both `node` and the server entry (`setup.sh` does). Then `/mcp reconnect` or restart Claude Code. Verify the binary itself is fine with `./setup.sh --check`. |
-| A new tool (e.g. `pull_latest`) shows "not found" but it's in the code | **Stale running server.** A session doesn't hot-reload. `/mcp reconnect` or quit & reopen Claude Code. Verify with `./setup.sh --check`. |
+| **`MCP error -32000: Connection closed`** / figma-bridge **"Failed"** / plugin stuck "Disconnected", nothing on `:1994` | The client can't spawn the server. **First diagnose with `bash setup.sh --check`** — it reads the registered server path straight from config (fast, no hang). *(Avoid `claude mcp get`/`claude mcp list` for this — they health-check every configured MCP server and can hang.)* Two common causes: **(a) wrong/relative server path** — e.g. a `local`-scope entry pointing at `.../<project>/server/dist/index.js` (which doesn't exist) that *overrides* your `.mcp.json`. Fix: `claude mcp remove figma-bridge -s local`, then re-add with **absolute** paths: `claude mcp add figma-bridge -s local -- $(command -v node) /ABS/PATH/figma-agent-bridge/server/dist/index.js`. **(b) bare `node` not on the app's PATH** (GUI launch lacks Homebrew/nvm) → use the absolute node path. Always use absolute paths for both `node` and the server entry (`setup.sh` does). Then `/mcp reconnect` or restart Claude Code. Verify the binary itself is fine with `bash setup.sh --check`. |
+| A new tool (e.g. `pull_latest`) shows "not found" but it's in the code | **Stale running server.** A session doesn't hot-reload. `/mcp reconnect` or quit & reopen Claude Code. Verify with `bash setup.sh --check`. |
 | `/mcp` shows figma-bridge disconnected | `/mcp reconnect`, or restart Claude Code. Check the path in `.mcp.json` / `claude mcp get figma-bridge`. |
 | `list_files` returns `[]` | Plugin not running. Open the file in Figma desktop and run the plugin (⌥⌘P); keep the panel open. |
 | Tool times out after long idle | Figma killed the background plugin iframe. Re-run the plugin in the file. |
@@ -267,7 +267,7 @@ What full setup does: prereq checks → clone/update → build server + plugin �
 | `PROFILE_LOCKED` | The bridge's Chrome profile is open in another server instance. Run file ops from one instance, or close the other bridge Chrome window. |
 | Writes rejected: "Dev Mode is read-only" | Switch the file from Dev Mode to the design editor. |
 | Plugin crashes / won't run | Make sure you ran `npm run build` in `plugin/` after pulling; re-run the plugin (it reloads the built code). |
-| `create_file`/`pull_latest` returns a weird key like "new" | Old build. Rebuild + reconnect (`./setup.sh` then reconnect). |
+| `create_file`/`pull_latest` returns a weird key like "new" | Old build. Rebuild + reconnect (`bash setup.sh` then reconnect). |
 | `list_account_files` slow | It reads each file's key via right-click→Copy link (one interaction per file). Keep `limit` modest. |
 | Fonts look wrong after a text op | The font isn't available locally; the bridge substitutes Inter and records a warning. |
 | Plugin won't import | Must use the Figma **desktop** app, not the browser. |
@@ -284,7 +284,7 @@ cd server && npm install && npm run build
 cd ../plugin && npm install && npm run build
 ```
 
-Then **reconnect the bridge** (`/mcp reconnect` or restart Claude Code) and, after a plugin rebuild, re-run the plugin in your file (no re-import needed). Run `./setup.sh --check` to confirm.
+Then **reconnect the bridge** (`/mcp reconnect` or restart Claude Code) and, after a plugin rebuild, re-run the plugin in your file (no re-import needed). Run `bash setup.sh --check` to confirm.
 
 To pull upstream (gethopp) fixes: `git fetch upstream && git merge upstream/main` (resolve, rebuild).
 
