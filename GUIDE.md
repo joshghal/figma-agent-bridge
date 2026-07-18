@@ -134,6 +134,8 @@ Then **start (or restart) Claude Code** so it spawns the server. Confirm with `/
 
 ## 6. Figma setup (plugin + login)
 
+> **If you ran `setup.sh` in a terminal, it already guided both of these** — it opened a browser and waited for your Figma login, and prompted you to import the plugin. This section is the manual reference (and what to do in a non-interactive shell).
+
 ### 6a. Import the plugin (once per machine)
 
 1. Open the Figma **desktop app** and open any design file.

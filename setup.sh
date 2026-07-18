@@ -2,11 +2,12 @@
 #
 # figma-agent-bridge — team setup & doctor
 # ----------------------------------------
-# Sets up the Figma -> code "follow-and-slice" bridge, then DIAGNOSES the
-# result: builds the server + plugin, boots the server to confirm it exposes
-# the expected tools, checks whether the MCP server is registered with Claude
-# Code, checks the browser login profile, and reminds you to reconnect a
-# running session (which won't hot-reload a rebuilt server).
+# One interactive run does everything: builds the server + plugin, registers the
+# MCP server fresh (absolute paths), boots it to confirm the tools, then WALKS
+# YOU THROUGH the human steps — opens a browser and waits for your Figma login,
+# and prompts you to import the plugin — before printing the final NEXT STEPS
+# (reconnect Claude Code + run the plugin). Also DIAGNOSES: health, registration
+# path, and login. In a non-interactive shell the guided steps are skipped.
 #
 # Usage:
 #   ./setup.sh                   build + configure + diagnose
@@ -171,22 +172,40 @@ reconnect_reminder() {
   info "    - quit & reopen Claude Code."
 }
 
-# All the human-facing guidance, printed once at the very end of setup.
+# Interactive: open the browser and wait for the user to log into Figma.
+guided_login() {
+  say "Figma login — a browser window will open"
+  info "Log into Figma in the window (it closes itself when you're in; skips if already logged in)."
+  if node "$INSTALL_DIR/server/scripts/login.mjs"; then
+    ok "Figma session ready."
+  else
+    warn "Login step didn't complete — you can run figma_login later via your agent."
+    PROBLEMS=$((PROBLEMS + 1))
+  fi
+}
+
+# Interactive: guide the plugin import and wait for confirmation.
+guided_plugin_import() {
+  say "Import the Figma plugin (one-time, in the DESKTOP app)"
+  info "   Plugins -> Development -> Import plugin from manifest..."
+  info "   select:  $INSTALL_DIR/plugin/manifest.json"
+  printf '    Press Enter once the plugin is imported (or Enter to skip)... '
+  read -r _ || true
+  ok "Continuing."
+}
+
+# Final guidance, printed once at the very end.
 print_next_steps() {
-  say "NEXT STEPS — finish setup (do these in order)"
-  info "1. Figma DESKTOP app: Plugins -> Development -> Import plugin from manifest..."
-  info "      select:  $INSTALL_DIR/plugin/manifest.json"
-  info "2. Load the bridge into Claude Code: run  /mcp reconnect , or quit & reopen it."
-  info "      (A running session does NOT hot-reload a rebuilt server.)"
-  info "3. Ask your agent to run  figma_login  once"
-  info "      (use the account with view access to the designer's files)."
+  say "NEXT STEPS — finish and start using it"
+  info "1. Load the bridge into Claude Code:  /mcp reconnect  (or quit & reopen it)."
+  info "      A running session does NOT hot-reload a rebuilt server."
+  info "2. Run the plugin in your Figma file:  Plugins -> Development -> Figma Agent Bridge"
+  info "      (or press  Option+Cmd+P ). Keep the panel open — it should show Connected."
+  info "      If you skipped import above: Import from manifest -> $INSTALL_DIR/plugin/manifest.json"
+  info "      If you skipped login above:  ask your agent to run  figma_login ."
   info ""
-  info "Then — the daily workflow (follow a designer's file, slice it to code):"
-  info "   You    ->  \"pull the latest <designer file URL> and slice the <screen>\""
-  info "   Bridge ->  duplicates it (view access is enough), trashes the previous copy,"
-  info "              opens the fresh copy in Figma desktop."
-  info "   You    ->  press  Option+Cmd+P  in that file to run the bridge plugin."
-  info "   Agent  ->  reads the design and generates the code."
+  info "Then — daily use (follow a designer's file, slice it to code):"
+  info "   \"pull the latest <designer file URL> and slice the <screen>\"  ->  Option+Cmd+P  ->  done"
   info ""
   info "Diagnose anytime:  ./setup.sh --check      Full guide:  $INSTALL_DIR/GUIDE.md"
 }
@@ -250,9 +269,19 @@ fi
 
 configure_mcp
 
-# --- verify -----------------------------------------------------------------
+# --- verify + guided interactive steps --------------------------------------
 health_check
 check_registration
+
+# In a real terminal, walk the user through login + plugin import right here so
+# a single run completes everything. Skipped in non-interactive shells.
+if [ -t 0 ] && [ -t 1 ]; then
+  guided_login
+  guided_plugin_import
+else
+  info "(non-interactive shell — do figma_login + plugin import from NEXT STEPS below.)"
+fi
+
 check_login
 
 if [ "$PROBLEMS" -eq 0 ]; then
