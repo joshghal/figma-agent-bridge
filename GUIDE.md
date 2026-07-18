@@ -288,6 +288,26 @@ Then **reconnect the bridge** (`/mcp reconnect` or restart Claude Code) and, aft
 
 To pull upstream (gethopp) fixes: `git fetch upstream && git merge upstream/main` (resolve, rebuild).
 
+### Clean reinstall from scratch
+
+If you've ended up with **multiple clones** in different folders (a common source of "which one is registered / which one did I pull" confusion), collapse everything down to a single canonical clone. All your work lives on `origin`, and your Figma login lives in `~/.figma-agent-bridge/browser-profile` (separate from the clones) — so this loses nothing.
+
+```bash
+# 1. Remove every clone you might have (add any other paths you used)
+rm -rf ~/figma-agent-bridge \
+       ~/Documents/**/figma-agent-bridge
+
+# 2. Fresh clone — use EXACTLY this path so the MCP registration matches
+git clone https://github.com/joshghal/figma-agent-bridge.git ~/figma-agent-bridge
+
+# 3. Build + register + browser setup
+cd ~/figma-agent-bridge && bash setup.sh
+```
+
+Then **`/mcp reconnect`** (a running session never hot-reloads a rebuilt server), and re-run the plugin in your Figma file. Your saved Figma session carries over — no `figma_login` needed unless it reports `LOGIN_REQUIRED`. Confirm with `bash setup.sh --check`.
+
+> Clone to **exactly `~/figma-agent-bridge`** — that's the path `setup.sh` registers with Claude Code. A clone at any other path means you'd have to re-register (or the old registration points at a now-missing folder).
+
 ---
 
 ## 14. Credits & license
