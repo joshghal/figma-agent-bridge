@@ -22,8 +22,16 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/joshghal/figma-agent-bridge.git"
-INSTALL_DIR="${FIGMA_BRIDGE_DIR:-$HOME/figma-agent-bridge}"
 PROFILE_DIR="$HOME/.figma-agent-bridge/browser-profile"
+
+# Install dir: honor FIGMA_BRIDGE_DIR; else if this script sits inside the repo
+# (run from a clone), use that clone; else default to ~/figma-agent-bridge.
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/server/package.json" ] && [ -f "$SCRIPT_DIR/plugin/manifest.json" ]; then
+  INSTALL_DIR="${FIGMA_BRIDGE_DIR:-$SCRIPT_DIR}"
+else
+  INSTALL_DIR="${FIGMA_BRIDGE_DIR:-$HOME/figma-agent-bridge}"
+fi
 
 # --- pretty output ----------------------------------------------------------
 if [ -t 1 ]; then
@@ -163,6 +171,26 @@ reconnect_reminder() {
   info "    - quit & reopen Claude Code."
 }
 
+# All the human-facing guidance, printed once at the very end of setup.
+print_next_steps() {
+  say "NEXT STEPS — finish setup (do these in order)"
+  info "1. Figma DESKTOP app: Plugins -> Development -> Import plugin from manifest..."
+  info "      select:  $INSTALL_DIR/plugin/manifest.json"
+  info "2. Load the bridge into Claude Code: run  /mcp reconnect , or quit & reopen it."
+  info "      (A running session does NOT hot-reload a rebuilt server.)"
+  info "3. Ask your agent to run  figma_login  once"
+  info "      (use the account with view access to the designer's files)."
+  info ""
+  info "Then — the daily workflow (follow a designer's file, slice it to code):"
+  info "   You    ->  \"pull the latest <designer file URL> and slice the <screen>\""
+  info "   Bridge ->  duplicates it (view access is enough), trashes the previous copy,"
+  info "              opens the fresh copy in Figma desktop."
+  info "   You    ->  press  Option+Cmd+P  in that file to run the bridge plugin."
+  info "   Agent  ->  reads the design and generates the code."
+  info ""
+  info "Diagnose anytime:  ./setup.sh --check      Full guide:  $INSTALL_DIR/GUIDE.md"
+}
+
 # --- arg parsing ------------------------------------------------------------
 MODE="setup"; TARGET_DIR=""
 for a in "$@"; do
@@ -222,29 +250,16 @@ fi
 
 configure_mcp
 
-# --- verify + guide ---------------------------------------------------------
+# --- verify -----------------------------------------------------------------
 health_check
 check_registration
 check_login
-
-say "One-time manual steps"
-info "1. Figma DESKTOP app -> Plugins -> Development -> Import plugin from manifest..."
-info "   -> select:  $INSTALL_DIR/plugin/manifest.json"
-info "2. Reconnect / restart your MCP client so it loads the bridge (see below)."
-info "3. Ask your agent to run  figma_login  once (account with view access to the designer's files)."
-
-say "Daily workflow — follow a designer's file and slice it to code"
-info "You  ->  \"pull the latest <designer file URL> and slice the <screen>\""
-info "Bridge:  duplicates the file (view access is enough), trashes the previous copy,"
-info "         opens the fresh copy in Figma desktop."
-info "You  ->  press  Option+Cmd+P  in that file to run the bridge plugin."
-info "Agent -> reads the design over the bridge and generates the code."
-info "Full guide: $INSTALL_DIR/GUIDE.md"
-
-reconnect_reminder
 
 if [ "$PROBLEMS" -eq 0 ]; then
   printf '\n%sSetup complete — all checks passed.%s\n' "$BOLD$GRN" "$RST"
 else
   printf '\n%sSetup done, but %d check(s) need attention — see ✗ above.%s\n' "$BOLD$YLW" "$PROBLEMS" "$RST"
 fi
+
+# --- guide (all human steps, last) ------------------------------------------
+print_next_steps
