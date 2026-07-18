@@ -19,7 +19,7 @@ Fork of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge) 
 
 Figma's REST API is ~6 calls/month on the free plan and its Plugin API cannot create, duplicate, or list files (single-file sandbox) — no existing bridge covers file-level operations. This bridge pairs the Plugin API (full read/write inside open files, free on every plan) with an embedded Playwright browser session (file-level operations Figma exposes only through its web UI).
 
-**You do not need the official Figma MCP (`mcp.figma.com`) or a paid Figma account** — this bridge replaces both. If the `figma` MCP is registered, you can remove it (`claude mcp remove figma`) and keep only `figma-bridge`.
+**You do not need the official Figma MCP (`mcp.figma.com`), the standalone Playwright MCP, or a paid Figma account** — this bridge replaces the Figma MCP entirely, and it bundles Playwright as an in-process library (a dependency in `server/package.json`, installed by `npm install`) — *not* a separate MCP to register. If the `figma` MCP is registered, you can remove it (`claude mcp remove figma`) and keep only `figma-bridge`.
 
 **Main use case:** follow a designer's file you have *read-only* access to and slice it to code — `pull_latest` duplicates it (view access is enough), you run the plugin, the agent reads it and generates code. See [GUIDE.md §8](GUIDE.md#8-daily-usage--follow--slice).
 

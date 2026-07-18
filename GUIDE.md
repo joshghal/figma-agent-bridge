@@ -52,6 +52,7 @@ MCP server  (node server/dist/index.js)
 
 - **Plugin tools** (read design, edit, execute_code, pages, sync) go over the WebSocket to the plugin. The plugin must be running in the target file.
 - **File-op tools** (create/duplicate/list/delete/pull_latest/figma_login) drive the browser. They need a logged-in session, not the plugin.
+- **Playwright is bundled, not a separate MCP.** The browser automation uses the `playwright` npm **library inside this server** (a dependency in `server/package.json`) — **not** the standalone "Playwright MCP" (`mcp__playwright__*`). There is nothing extra to register: `npm install` (run by `setup.sh`) pulls in the library, and `setup.sh` installs the browser binary (system Chrome, or `npx playwright install chromium`).
 - The MCP server is a **long-running process**: it loads once and does **not** hot-reload when you rebuild. Rebuild → reconnect/restart to pick up changes (see [Troubleshooting](#12-troubleshooting)).
 
 ---
