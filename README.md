@@ -38,9 +38,10 @@ Claude/agent ⇄ MCP server (stdio, Node)
 **Fastest (teammates):** clone the repo and run the setup script — it checks prerequisites, builds the server + plugin, sets up the browser, and wires (or prints) the MCP config, then lists the remaining manual steps:
 
 ```bash
-bash setup.sh                 # build + configure + diagnose
-bash setup.sh /path/to/proj   # also writes the figma-bridge entry into that project's .mcp.json
-bash setup.sh --check         # doctor: diagnose an existing install (health, MCP registration, login)
+chmod +x setup.sh             # one-time: make the script executable (or just prefix each command with `bash`)
+./setup.sh                    # build + configure + diagnose
+./setup.sh /path/to/proj      # also writes the figma-bridge entry into that project's .mcp.json
+./setup.sh --check            # doctor: diagnose an existing install (health, MCP registration, login)
 ```
 
 Then do the 3 one-time manual steps it prints (import the plugin in Figma desktop, reconnect your MCP client, run `figma_login` once). Run `bash setup.sh --check` anytime to confirm the server is healthy, MCP is registered, and login is done. Manual setup below if you prefer.
