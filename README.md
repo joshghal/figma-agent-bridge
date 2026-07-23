@@ -11,7 +11,7 @@ A self-owned Figma ⇄ AI-agent bridge with **all five capabilities on a free Fi
 | 5 | Sync to a targeted file | Multi-file plugin registry, serialize → rebuild | **`sync_nodes`** |
 | + | List account files | Embedded Playwright → files dashboard | **`list_account_files`** |
 
-Fork of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge) (MIT) — the transport (MCP server *is* the WebSocket server on `:1994`, fileKey-keyed multi-file registry, leader-follower election) is theirs. The `execute_code` pattern follows [southleft/figma-console-mcp](https://github.com/southleft/figma-console-mcp); page tooling ideas from [arinspunk/claude-talk-to-figma-mcp](https://github.com/arinspunk/claude-talk-to-figma-mcp).
+Fork of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge) (MIT) — the transport (MCP server *is* the WebSocket server on `:31856`, fileKey-keyed multi-file registry, leader-follower election) is theirs. The `execute_code` pattern follows [southleft/figma-console-mcp](https://github.com/southleft/figma-console-mcp); page tooling ideas from [arinspunk/claude-talk-to-figma-mcp](https://github.com/arinspunk/claude-talk-to-figma-mcp).
 
 **📖 New here? Follow [GUIDE.md](GUIDE.md)** — the complete, from-zero manual: install, Claude Code setup, Figma setup, the follow-and-slice workflow, tool reference, and troubleshooting.
 
@@ -27,7 +27,7 @@ Figma's REST API is ~6 calls/month on the free plan and its Plugin API cannot cr
 
 ```
 Claude/agent ⇄ MCP server (stdio, Node)
-                ├─ WS :1994 ⇄ Figma plugin (desktop app, one instance per open file)
+                ├─ WS :31856 ⇄ Figma plugin (desktop app, one instance per open file)
                 │    └─ registry keyed by figma.fileKey (multiple files at once)
                 └─ Playwright (persistent Chrome profile at ~/.figma-agent-bridge/browser-profile)
                      └─ create_file · duplicate_file · list_account_files · figma_login

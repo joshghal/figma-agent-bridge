@@ -9,7 +9,7 @@ import { registerBrowserTools } from "./browser/tools.js";
 import { closeBrowser } from "./browser/session.js";
 import { VERSION } from "./version.js";
 
-const PORT = 1994;
+const PORT = 31856;
 
 async function main(): Promise<void> {
 

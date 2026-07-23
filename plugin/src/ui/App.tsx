@@ -52,7 +52,7 @@ type PluginStatus = {
   token: string | null;
 };
 
-const WS_BASE_URL = "ws://localhost:1994/ws";
+const WS_BASE_URL = "ws://localhost:31856/ws";
 const TOKEN_SUBPROTOCOL_PREFIX = "bridge-token.";
 
 export default function App() {

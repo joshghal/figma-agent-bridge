@@ -44,7 +44,7 @@ Claude Code (agent)
       │  MCP (stdio)
       ▼
 MCP server  (node server/dist/index.js)
-      ├─ WebSocket :1994  ⇄  Figma plugin  (runs inside the open file, desktop app)
+      ├─ WebSocket :31856  ⇄  Figma plugin  (runs inside the open file, desktop app)
       │        └─ registry keyed by figma.fileKey (multiple files at once)
       └─ Playwright  ⇄  figma.com  (persistent Chrome profile, logged in once)
                └─ create / duplicate / list / delete / pull_latest
@@ -269,7 +269,7 @@ What full setup does: prereq checks → clone/update → build server + plugin �
 
 | Symptom | Cause → fix |
 |---|---|
-| **`MCP error -32000: Connection closed`** / figma-bridge **"Failed"** / plugin stuck "Disconnected", nothing on `:1994` | The client can't spawn the server. **First diagnose with `bash setup.sh --check`** — it reads the registered server path straight from config (fast, no hang). *(Avoid `claude mcp get`/`claude mcp list` for this — they health-check every configured MCP server and can hang.)* Two common causes: **(a) wrong/relative server path** — e.g. a `local`-scope entry pointing at `.../<project>/server/dist/index.js` (which doesn't exist) that *overrides* your `.mcp.json`. Fix: `claude mcp remove figma-bridge -s local`, then re-add with **absolute** paths: `claude mcp add figma-bridge -s local -- $(command -v node) /ABS/PATH/figma-agent-bridge/server/dist/index.js`. **(b) bare `node` not on the app's PATH** (GUI launch lacks Homebrew/nvm) → use the absolute node path. Always use absolute paths for both `node` and the server entry (`setup.sh` does). Then `/mcp reconnect` or restart Claude Code. Verify the binary itself is fine with `bash setup.sh --check`. |
+| **`MCP error -32000: Connection closed`** / figma-bridge **"Failed"** / plugin stuck "Disconnected", nothing on `:31856` | The client can't spawn the server. **First diagnose with `bash setup.sh --check`** — it reads the registered server path straight from config (fast, no hang). *(Avoid `claude mcp get`/`claude mcp list` for this — they health-check every configured MCP server and can hang.)* Two common causes: **(a) wrong/relative server path** — e.g. a `local`-scope entry pointing at `.../<project>/server/dist/index.js` (which doesn't exist) that *overrides* your `.mcp.json`. Fix: `claude mcp remove figma-bridge -s local`, then re-add with **absolute** paths: `claude mcp add figma-bridge -s local -- $(command -v node) /ABS/PATH/figma-agent-bridge/server/dist/index.js`. **(b) bare `node` not on the app's PATH** (GUI launch lacks Homebrew/nvm) → use the absolute node path. Always use absolute paths for both `node` and the server entry (`setup.sh` does). Then `/mcp reconnect` or restart Claude Code. Verify the binary itself is fine with `bash setup.sh --check`. |
 | A new tool (e.g. `pull_latest`) shows "not found" but it's in the code | **Stale running server.** A session doesn't hot-reload. `/mcp reconnect` or quit & reopen Claude Code. Verify with `bash setup.sh --check`. |
 | `/mcp` shows figma-bridge disconnected | `/mcp reconnect`, or restart Claude Code. Check the path in `.mcp.json` / `claude mcp get figma-bridge`. |
 | `list_files` returns `[]` | Plugin not running. Open the file in Figma desktop and run the plugin (⌥⌘P); keep the panel open. |
