@@ -69,7 +69,13 @@ async function waitForFileUrl(
       const match = u.match(FILE_URL_RE);
       return match !== null && accept(match[1]);
     },
-    { timeout: timeoutMs }
+    // "commit" resolves as soon as the target URL is navigated to, without
+    // waiting for the (default) "load" lifecycle event. A large file's editor
+    // can take far longer than the timeout to fully load, so waiting for "load"
+    // spuriously times out even though the duplicate redirect already happened.
+    // We only need the URL/key here; callers that touch the editor UI settle
+    // separately.
+    { timeout: timeoutMs, waitUntil: "commit" }
   );
   assertLoggedIn(page);
   const match = page.url().match(FILE_URL_RE);
