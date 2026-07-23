@@ -2,6 +2,23 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { BridgeRequest, BridgeResponse, ConnectedFile } from "./types.js";
+import { tokensMatch } from "./auth.js";
+
+const TOKEN_SUBPROTOCOL_PREFIX = "bridge-token.";
+
+function extractBridgeToken(
+  header: string | string[] | undefined
+): string | null {
+  if (!header) return null;
+  const raw = Array.isArray(header) ? header.join(",") : header;
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(TOKEN_SUBPROTOCOL_PREFIX)) {
+      return trimmed.slice(TOKEN_SUBPROTOCOL_PREFIX.length);
+    }
+  }
+  return null;
+}
 
 interface PendingRequest {
   resolve: (resp: BridgeResponse) => void;
@@ -24,8 +41,17 @@ export class Bridge {
   private counter = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor() {
-    this.wss = new WebSocketServer({ noServer: true });
+  constructor(private token: string) {
+    this.wss = new WebSocketServer({
+      noServer: true,
+      // Echo back whichever subprotocol the client offered (our token,
+      // wrapped) so spec-compliant clients don't fail the handshake for
+      // lack of a Sec-WebSocket-Protocol response header.
+      handleProtocols: (protocols) => {
+        const first = protocols.values().next();
+        return first.done ? false : first.value;
+      },
+    });
     this.wss.on("error", (err) => {
       console.error("WebSocketServer error:", err);
     });
@@ -64,7 +90,25 @@ export class Bridge {
       return;
     }
 
+    const provided = extractBridgeToken(
+      request.headers["sec-websocket-protocol"]
+    );
+    const authorized = tokensMatch(provided, this.token);
+
+    // Complete the handshake even when unauthorized, then immediately close
+    // with a distinct code (rather than rejecting the raw HTTP upgrade).
+    // Browsers can't read the HTTP status of a failed WS handshake, so a
+    // pre-handshake rejection is indistinguishable from "server not up yet"
+    // client-side — a real WS close code lets the plugin UI tell the two
+    // apart and prompt for re-pairing instead of retrying forever.
     this.wss.handleUpgrade(request, socket, head, (ws) => {
+      if (!authorized) {
+        console.error(
+          `Rejected WS connection for fileKey ${fileKey}: invalid or missing bridge token`
+        );
+        ws.close(4001, "invalid bridge token");
+        return;
+      }
       this.handleConnection(ws, fileKey, fileName);
     });
   }

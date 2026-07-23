@@ -97,6 +97,49 @@ body {
   font-weight: 500;
 }
 
+.pairing-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+}
+
+.token-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--badge-border);
+  background: var(--badge-bg);
+  color: var(--badge-text);
+}
+
+.token-input:focus {
+  outline: 2px solid var(--dot-connected);
+  outline-offset: 1px;
+}
+
+.pair-button {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: none;
+  background: var(--dot-connected);
+  color: var(--text-white);
+  cursor: pointer;
+}
+
+.pair-button:disabled {
+  background: var(--badge-border);
+  color: var(--badge-text);
+  cursor: not-allowed;
+}
+
 .branding {
   display: flex;
   flex-direction: column;

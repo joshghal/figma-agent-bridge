@@ -1,4 +1,5 @@
 import type { BridgeResponse, ConnectedFile, RPCRequest, RPCResponse } from "./types.js";
+import { getOrCreateToken } from "./auth.js";
 
 /**
  * Follower proxies MCP tool calls to the leader via HTTP /rpc.
@@ -27,7 +28,10 @@ export class Follower {
 
     const response = await fetch(`${this.leaderUrl}/rpc`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-token": getOrCreateToken(),
+      },
       body: JSON.stringify(rpcReq),
       signal: AbortSignal.timeout(210_000),
     });
@@ -52,7 +56,10 @@ export class Follower {
   async listConnectedFiles(): Promise<ConnectedFile[]> {
     const response = await fetch(`${this.leaderUrl}/rpc`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-token": getOrCreateToken(),
+      },
       body: JSON.stringify({ tool: "list_files" } as RPCRequest),
       signal: AbortSignal.timeout(5_000),
     });

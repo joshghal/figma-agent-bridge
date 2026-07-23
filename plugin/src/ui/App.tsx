@@ -49,17 +49,23 @@ type PluginStatus = {
   fileName: string;
   fileKey: string;
   selectionCount: number;
+  token: string | null;
 };
 
 const WS_BASE_URL = "ws://localhost:1994/ws";
+const TOKEN_SUBPROTOCOL_PREFIX = "bridge-token.";
 
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<PluginStatus>({
     fileName: "Unknown file",
     fileKey: "",
-    selectionCount: 0
+    selectionCount: 0,
+    token: null
   });
+  const [tokenInput, setTokenInput] = useState("");
+  const [authFailed, setAuthFailed] = useState(false);
+  const [pairNonce, setPairNonce] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
 
@@ -74,7 +80,12 @@ export default function App() {
       if (!msg) return;
 
       if (msg.type === "plugin-status") {
-        setStatus(msg.payload);
+        setStatus((prev) => {
+          if (msg.payload.token && msg.payload.token !== prev.token) {
+            setAuthFailed(false);
+          }
+          return msg.payload;
+        });
         return;
       }
 
@@ -94,9 +105,9 @@ export default function App() {
     };
   }, []);
 
-  // Connect/reconnect WebSocket when fileKey changes
+  // Connect/reconnect WebSocket when fileKey or the paired token changes
   useEffect(() => {
-    if (!status.fileKey) return;
+    if (!status.fileKey || !status.token) return;
 
     let disposed = false;
 
@@ -113,7 +124,7 @@ export default function App() {
       }
 
       const wsUrl = `${WS_BASE_URL}?fileKey=${encodeURIComponent(status.fileKey)}&fileName=${encodeURIComponent(status.fileName)}`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl, [`${TOKEN_SUBPROTOCOL_PREFIX}${status.token}`]);
       socketRef.current = ws;
 
       ws.onopen = () => {
@@ -121,9 +132,15 @@ export default function App() {
         parent.postMessage({ pluginMessage: { type: "ui-ready" } }, "*");
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (disposed || socketRef.current !== ws) return;
         setConnected(false);
+        if (event.code === 4001) {
+          // Server rejected our token — don't spin retrying with a value
+          // we know is bad, prompt the user to re-pair instead.
+          setAuthFailed(true);
+          return;
+        }
         if (reconnectTimer.current === null) {
           reconnectTimer.current = window.setTimeout(() => {
             reconnectTimer.current = null;
@@ -162,9 +179,24 @@ export default function App() {
         socketRef.current = null;
       }
     };
-  }, [status.fileKey, status.fileName]);
+  }, [status.fileKey, status.fileName, status.token, pairNonce]);
 
+  const submitToken = () => {
+    const trimmed = tokenInput.trim();
+    if (!trimmed) return;
+    parent.postMessage(
+      { pluginMessage: { type: "set-token", payload: { token: trimmed } } },
+      "*"
+    );
+    setTokenInput("");
+    setAuthFailed(false);
+    // Force a fresh connect attempt even if the token string is unchanged
+    // from the last (failed) attempt — status.token alone wouldn't retrigger
+    // the effect in that case.
+    setPairNonce((n) => n + 1);
+  };
 
+  const needsPairing = !status.token || authFailed;
 
   return (
     <div className="container">
@@ -180,10 +212,33 @@ export default function App() {
       </div>
 
       <div className="footer">
-        <div className={`badge ${connected ? "connected" : "disconnected"}`}>
-          <span className="dot" />
-          <span className="badge-text">{statusLabel}</span>
-        </div>
+        {needsPairing ? (
+          <div className="pairing-row">
+            <input
+              type="text"
+              className="token-input"
+              placeholder={authFailed ? "Invalid token, retry" : "Paste bridge token"}
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitToken();
+              }}
+            />
+            <button
+              type="button"
+              className="pair-button"
+              onClick={submitToken}
+              disabled={!tokenInput.trim()}
+            >
+              Pair
+            </button>
+          </div>
+        ) : (
+          <div className={`badge ${connected ? "connected" : "disconnected"}`}>
+            <span className="dot" />
+            <span className="badge-text">{statusLabel}</span>
+          </div>
+        )}
         <a
           href="https://www.gethopp.app/?ref=figma-mcp-bridge"
           target="_blank"

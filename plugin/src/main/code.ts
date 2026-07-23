@@ -201,13 +201,20 @@ const getFileKey = (): string => {
   return cachedFallbackFileKey;
 };
 
-const sendStatus = () => {
+const TOKEN_STORAGE_KEY = "bridgeToken";
+
+const sendStatus = async () => {
+  const token =
+    ((await figma.clientStorage.getAsync(TOKEN_STORAGE_KEY)) as
+      | string
+      | undefined) ?? null;
   figma.ui.postMessage({
     type: "plugin-status",
     payload: {
       fileName: figma.root.name,
       fileKey: getFileKey(),
       selectionCount: figma.currentPage.selection.length,
+      token,
     },
   });
 };
@@ -2174,15 +2181,28 @@ const handleRequest = async (
 };
 
 figma.showUI(__html__, { width: 320, height: 180 });
-sendStatus();
+void sendStatus();
 
 figma.on("selectionchange", () => {
-  sendStatus();
+  void sendStatus();
 });
 
 figma.ui.onmessage = async (message) => {
   if (message.type === "ui-ready") {
-    sendStatus();
+    await sendStatus();
+    return;
+  }
+
+  if (message.type === "set-token") {
+    const token =
+      typeof (message.payload as { token?: unknown } | undefined)?.token ===
+      "string"
+        ? ((message.payload as { token: string }).token.trim())
+        : "";
+    if (token) {
+      await figma.clientStorage.setAsync(TOKEN_STORAGE_KEY, token);
+    }
+    await sendStatus();
     return;
   }
 

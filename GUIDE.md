@@ -147,6 +147,17 @@ Then **start (or restart) Claude Code** so it spawns the server. Confirm with `/
 
 Ask your agent to run **`figma_login`**. A Chrome window opens on the Figma login page — sign in **there** (the bridge never sees your password). Use the account that has view access to the designer's files. The session persists in `~/.figma-agent-bridge/browser-profile`, so this is one-time until it expires.
 
+### 6c. Pair the plugin with your bridge token (once per machine)
+
+The plugin's WebSocket connection is authenticated with a random token generated on your machine the first time the bridge runs — this stops another process (or a malicious webpage, if you had one open) from connecting to your bridge instead of the real plugin.
+
+1. Start the bridge once (open a Figma file with the plugin running, or just let Claude Code launch the MCP server) so the token file gets created.
+2. Get the token: `cat ~/.figma-agent-bridge/token`
+3. Open the plugin panel in Figma — it shows a small "Paste bridge token" field instead of the connection badge until paired.
+4. Paste the token and click **Pair**.
+
+The token is stored via Figma's `clientStorage` (scoped to your plugin install) and reused automatically on every reconnect and Figma restart — you only do this once. If the field reappears asking to re-pair, the token was rejected (e.g. you deleted/regenerated `~/.figma-agent-bridge/token`) — `cat` it again and re-paste.
+
 ---
 
 ## 7. Verify everything (doctor)

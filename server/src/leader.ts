@@ -6,6 +6,7 @@ import { executeSaveScreenshots } from "./tools.js";
 import type { ExportFormat } from "./tools.js";
 import type { RPCRequest, RPCResponse } from "./types.js";
 import { VERSION } from "./version.js";
+import { getOrCreateToken, tokensMatch } from "./auth.js";
 
 /**
  * Leader owns the WebSocket bridge to Figma and exposes HTTP endpoints for followers.
@@ -17,9 +18,11 @@ import { VERSION } from "./version.js";
 export class Leader {
   private bridge: Bridge;
   private server: http.Server | null = null;
+  private token: string;
 
   constructor(private port: number) {
-    this.bridge = new Bridge();
+    this.token = getOrCreateToken();
+    this.bridge = new Bridge(this.token);
   }
 
   getBridge(): Bridge {
@@ -36,6 +39,27 @@ export class Leader {
         }
 
         if (req.url === "/rpc" && req.method === "POST") {
+          // Legitimate callers are same-machine Follower Node processes,
+          // which never set an Origin header — a browser-style caller
+          // (e.g. a malicious page in an open tab) always does.
+          if (req.headers.origin) {
+            this.sendJSON(res, 403, {
+              error: "Forbidden: browser-origin requests are not permitted on /rpc",
+            });
+            return;
+          }
+          const provided = req.headers["x-bridge-token"];
+          if (
+            !tokensMatch(
+              typeof provided === "string" ? provided : undefined,
+              this.token
+            )
+          ) {
+            this.sendJSON(res, 401, {
+              error: "Unauthorized: missing or invalid x-bridge-token",
+            });
+            return;
+          }
           this.handleRPC(req, res);
           return;
         }
@@ -66,9 +90,9 @@ export class Leader {
         }
       });
 
-      server.listen(this.port, () => {
+      server.listen(this.port, "127.0.0.1", () => {
         this.server = server;
-        console.error(`Leader listening on :${this.port}`);
+        console.error(`Leader listening on 127.0.0.1:${this.port}`);
         resolve();
       });
     });
