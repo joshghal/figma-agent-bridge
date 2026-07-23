@@ -154,7 +154,7 @@ The plugin's WebSocket connection is authenticated with a random token generated
 1. Start the bridge once (open a Figma file with the plugin running, or just let Claude Code launch the MCP server) so the token file gets created.
 2. Get the token: `cat ~/.figma-agent-bridge/token`
 3. Open the plugin panel in Figma — it shows a small "Paste bridge token" field instead of the connection badge until paired.
-4. Paste the token and click **Pair**.
+4. Paste the token and click **Pair**. (The plugin strips any stray characters, so a trailing `%` your shell may show — a "no newline" marker, not part of the token — is fine.)
 
 The token is stored via Figma's `clientStorage` (scoped to your plugin install) and reused automatically on every reconnect and Figma restart — you only do this once. If the field reappears asking to re-pair, the token was rejected (e.g. you deleted/regenerated `~/.figma-agent-bridge/token`) — `cat` it again and re-paste.
 

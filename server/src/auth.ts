@@ -20,7 +20,10 @@ export function getOrCreateToken(): string {
   fs.mkdirSync(TOKEN_DIR, { recursive: true, mode: 0o700 });
   try {
     const token = crypto.randomBytes(32).toString("hex");
-    fs.writeFileSync(TOKEN_PATH, token, { flag: "wx", mode: 0o600 });
+    // Trailing newline so `cat ~/.figma-agent-bridge/token` prints cleanly
+    // (no zsh "%" no-newline marker that users copy by accident when pairing).
+    // The read path below trims, so the stored value stays the bare token.
+    fs.writeFileSync(TOKEN_PATH, token + "\n", { flag: "wx", mode: 0o600 });
     cachedToken = token;
     return token;
   } catch (err) {

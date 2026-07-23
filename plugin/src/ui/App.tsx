@@ -182,10 +182,13 @@ export default function App() {
   }, [status.fileKey, status.fileName, status.token, pairNonce]);
 
   const submitToken = () => {
-    const trimmed = tokenInput.trim();
-    if (!trimmed) return;
+    // The token is 64 hex chars. Strip anything that isn't hex so a paste that
+    // grabbed a shell "%" no-newline marker, stray whitespace, or a newline
+    // still pairs cleanly.
+    const cleaned = tokenInput.replace(/[^0-9a-fA-F]/g, "");
+    if (!cleaned) return;
     parent.postMessage(
-      { pluginMessage: { type: "set-token", payload: { token: trimmed } } },
+      { pluginMessage: { type: "set-token", payload: { token: cleaned } } },
       "*"
     );
     setTokenInput("");
