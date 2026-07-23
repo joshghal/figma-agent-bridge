@@ -37,5 +37,10 @@ export function tokenFilePath(): string {
 /** Constant-time compare; mismatched length short-circuits (length isn't secret). */
 export function tokensMatch(a: string | undefined | null, b: string): boolean {
   if (!a || a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  // Guard against equal .length but different byte length (multibyte input),
+  // which would make timingSafeEqual throw. No auth impact, avoids a crash path.
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }

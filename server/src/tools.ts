@@ -1155,33 +1155,57 @@ async function assertSafeHttpUrl(url: URL): Promise<void> {
  * @param address - IPv4 or IPv6 address string.
  * @returns True if the address is blocked for SSRF protection.
  */
+function isBlockedIpv4(address: string): boolean {
+  const [a, b] = address.split(".").map(Number);
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a >= 224
+  );
+}
+
 function isBlockedIp(address: string): boolean {
-  if (isIP(address) === 4) {
-    const [a, b] = address.split(".").map(Number);
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      a >= 224
-    );
+  const version = isIP(address);
+  if (version === 4) {
+    return isBlockedIpv4(address);
+  }
+  // Not a parseable IPv4/IPv6 literal → fail closed.
+  if (version !== 6) {
+    return true;
   }
 
   const normalized = address.toLowerCase();
-  if (normalized.startsWith("::ffff:")) {
-    return isBlockedIp(normalized.slice("::ffff:".length));
+
+  // Every IPv6 literal beginning with "::" is in the low special-purpose block:
+  // unspecified (::), loopback (::1), IPv4-mapped (::ffff:a.b.c.d AND its
+  // hex-normalized form ::ffff:XXXX:XXXX — the WHATWG URL parser emits the hex
+  // form, which the old dotted-recursion missed), and deprecated IPv4-compatible
+  // (::a.b.c.d). None are legitimate public image hosts, so block the whole
+  // prefix. NAT64 (64:ff9b::/96) embeds an internal IPv4 the same way.
+  if (normalized.startsWith("::") || normalized.startsWith("64:ff9b:")) {
+    return true;
   }
 
+  const hextets = normalized.split(":");
+  const first = parseInt(hextets[0] || "0", 16);
+  // Teredo 2001:0000::/32 embeds a client/server IPv4; detect a zero 2nd hextet
+  // (serializes as "0" uncompressed, or "" when absorbed by "::"). Public
+  // 2001:xxxx global unicast (2nd hextet != 0, e.g. Google 2001:4860::) stays allowed.
+  const secondIsZero =
+    hextets[1] === "" ||
+    (hextets[1] !== undefined && parseInt(hextets[1], 16) === 0);
   return (
-    normalized === "::" ||
-    normalized === "::1" ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    /^fe[89ab]:/.test(normalized) ||
-    normalized.startsWith("ff")
+    (first & 0xfe00) === 0xfc00 || // fc00::/7  unique-local
+    (first & 0xffc0) === 0xfe80 || // fe80::/10 link-local (old /^fe[89ab]:/ never matched canonical fe80::)
+    (first & 0xffc0) === 0xfec0 || // fec0::/10 deprecated site-local
+    (first & 0xff00) === 0xff00 || // ff00::/8  multicast
+    first === 0x2002 || // 2002::/16 6to4 (may embed an internal IPv4)
+    (first === 0x2001 && secondIsZero) // 2001:0::/32 Teredo (embeds an IPv4)
   );
 }
 
